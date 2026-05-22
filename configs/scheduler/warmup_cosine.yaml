@@ -1,0 +1,4 @@
+name: "warmup_cosine"
+warmup_epochs: 20
+min_lr_factor: 0.001
+warmup_start_factor: 0.01

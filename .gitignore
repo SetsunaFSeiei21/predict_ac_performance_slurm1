@@ -1,0 +1,12 @@
+data/ 
+outputs/
+
+__pycache__/
+*.txt
+*.ipynb
+
+experiment_result/
+logs/
+model_weight/
+hydra_outputs/
+hpc_logs/

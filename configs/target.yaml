@@ -1,0 +1,29 @@
+defaults:
+  - dataset: dataset
+  - model: mlp
+  - scheduler: warmup_cosine
+  - exp: target_train
+  - target_init: mlp
+  - _self_
+
+meta_path: "data"
+seed: 42
+
+dataset:
+  mission_type: "target"
+
+# 如果不为空，直接读取这个 checkpoint
+source_checkpoint_path: null
+
+# 如果 source_checkpoint_path 为 null，则自动按下面规则找：
+# source_weight_root / model_name / circuit_name / source / {model_name}_{circuit_name}_source.pt
+source_weight_root: "model_weight"
+
+# 是否严格加载 source state_dict
+# 同一电路 source -> target 通常用 true
+# 跨电路迁移可能需要 false
+strict_load_state_dict: true
+
+result_root: "experiment_result"
+weight_root: "model_weight"
+log_root: "logs"

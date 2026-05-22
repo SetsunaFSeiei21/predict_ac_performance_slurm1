@@ -1,0 +1,14 @@
+seed: 42
+batch_size: 64
+circuit_name: "two_stage_folded_opamp"
+mission_type: "source"
+num_workers: 8
+train_ratio: 0.8
+normalize_x: true
+normalize_y: true
+auto_log_y: true
+log_y_ratio_threshold: 10000.0
+remove_outlier: true
+iqr_factor: 3.0
+outlier_use_x: false
+outlier_use_y: true

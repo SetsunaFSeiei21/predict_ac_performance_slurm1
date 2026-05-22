@@ -1,0 +1,6 @@
+k_fold: 5
+epochs: 200
+alpha: 0.5
+lr: 0.0001
+weight_decay: 0.0001
+log_interval: 10
