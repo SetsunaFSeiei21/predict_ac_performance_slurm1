@@ -62,7 +62,7 @@ class Global_Encoder_WO_SE(Device_BaseModel):
     def _get_attn_mask(self, adj_mask: torch.Tensor) -> torch.Tensor:
         
         N, _ = adj_mask.shape
-        col_tensors = torch.zeros((N, 1), dtype=torch.float32)
+        col_tensors = torch.ones((N, 1), dtype=torch.float32)
         row_tensors = torch.ones((1, N+1), dtype=torch.float32)
         adj_mask = torch.cat((adj_mask, col_tensors), dim=-1)
         adj_mask = torch.cat((adj_mask, row_tensors), dim=0)

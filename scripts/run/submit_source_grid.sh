@@ -12,20 +12,20 @@ mkdir -p "hpc_logs/${DATE_TAG}"
 # Experiment scope
 # ================================
 MODELS=(
-    mlp
-    res_mlp
-    gat
-    gcn
-    accformer
-    zerosim_device
-    global_encoder_wo_se
-    global_encoder_with_se
-    zerosim_device_pr_with_ge
+    # mlp
+    # res_mlp
+    # gat
+    # gcn
+    # accformer
+    # zerosim_device
+    # global_encoder_wo_se
+    # global_encoder_with_se
+    # zerosim_device_pr_with_ge
     zerosim_device_wo_se
 )
 
 CIRCUITS=(
-    5t_opamp
+    # 5t_opamp
     two_stage_opamp
     two_stage_folded_opamp
 )

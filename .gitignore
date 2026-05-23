@@ -10,3 +10,4 @@ logs/
 model_weight/
 hydra_outputs/
 hpc_logs/
+.vscode/

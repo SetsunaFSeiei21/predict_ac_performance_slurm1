@@ -76,7 +76,7 @@ class Zerosim_DEVICE_PR_WITH_GE(Device_BaseModel):
     def _get_pr_attn_mask(self, adj_mask: torch.Tensor) -> torch.Tensor:
         
         N, _ = adj_mask.shape
-        add_col_tensors = torch.zeros((N, 1), dtype=torch.float32, device=adj_mask.device)
+        add_col_tensors = torch.ones((N, 1), dtype=torch.float32, device=adj_mask.device)
         add_row_tensors = torch.ones((1, N+1), dtype=torch.float32, device=adj_mask.device)
         adj_tensors = torch.cat((adj_mask, add_col_tensors), dim=-1)
         adj_tensors = torch.cat((adj_tensors, add_row_tensors), dim=0)

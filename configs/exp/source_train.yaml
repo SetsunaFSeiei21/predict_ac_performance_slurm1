@@ -1,4 +1,4 @@
-k_fold: 5
+k_fold: 2
 epochs: 200
 alpha: 0.5
 lr: 0.0001
