@@ -1,5 +1,5 @@
-k_fold: 2
-epochs: 200
+k_fold: 2 # 5
+epochs: 150 # 200
 alpha: 0.5
 lr: 0.0001
 weight_decay: 0.0001

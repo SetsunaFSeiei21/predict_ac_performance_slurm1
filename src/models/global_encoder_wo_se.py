@@ -44,17 +44,19 @@ class Global_Encoder_WO_SE(Device_BaseModel):
         device_tensors = self.network["device_embedding_layer"](final_device_one_hot_tensors)
         parameter_tensors = self.network["parameter_embedding_layer"](x)
         shared_global_controller = self.global_token.reshape(1, 1, -1).expand(B, -1, -1)
+        encoder_input = torch.cat((device_tensors, shared_global_controller), dim=1)
         for idx, sub_layer in enumerate(self.network["global_encoder_layer"]):
-            encoder_input = torch.cat((device_tensors, shared_global_controller), dim=1)
             if idx < len(self.network["global_encoder_layer"]) - self.unmask_global_encoder_layer_num:
                 encoder_output, _ = sub_layer(encoder_input, self.attn_mask)
             else:
                 encoder_output, _ = sub_layer(encoder_input)
             tmp_device_tensors = encoder_output[:,:-1,:]
+            tmp_global_tensors = encoder_output[:, -1:, :]
             device_tensors = tmp_device_tensors + parameter_tensors
+            encoder_input = torch.cat((device_tensors, tmp_global_tensors), dim=1)
         performance_tensors = self.performance_metric.unsqueeze(0).expand(B, -1, -1)
         for sub_layer in self.network["decoder_layer"]:
-            performance_tensors, _ = sub_layer(device_tensors, performance_tensors)
+            performance_tensors, _ = sub_layer(encoder_input, performance_tensors)
         output_tensors = self.network["output_layer"](performance_tensors).reshape(B, -1)
         
         return output_tensors
@@ -62,7 +64,7 @@ class Global_Encoder_WO_SE(Device_BaseModel):
     def _get_attn_mask(self, adj_mask: torch.Tensor) -> torch.Tensor:
         
         N, _ = adj_mask.shape
-        col_tensors = torch.ones((N, 1), dtype=torch.float32)
+        col_tensors = torch.zeros((N, 1), dtype=torch.float32)
         row_tensors = torch.ones((1, N+1), dtype=torch.float32)
         adj_mask = torch.cat((adj_mask, col_tensors), dim=-1)
         adj_mask = torch.cat((adj_mask, row_tensors), dim=0)

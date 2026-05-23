@@ -17,13 +17,14 @@ class Parameter_Injection_GE_Layer(nn.Module):
         encoder_input_tensors = torch.cat((device_embeddings, share_global_controller), dim=1)
         encoder_input_tensors, _ = self.multi_head_attention_layer1(encoder_input_tensors, attn_mask)
         tmp_device_embeddings = encoder_input_tensors[:, :-1, :]
+        share_global_controller = encoder_input_tensors[:, -1:, :]
         device_embeddings = tmp_device_embeddings + parameter_embeddings
         encoder_input_tensors = torch.cat((device_embeddings, share_global_controller), dim=1)
         encoder_input_tensors, _ = self.multi_head_attention_layer2(encoder_input_tensors)
         tmp_device_embeddings = encoder_input_tensors[:, :-1, :]
         device_embeddings = tmp_device_embeddings + parameter_embeddings
         
-        return device_embeddings
+        return device_embeddings, encoder_input_tensors[:, -1:, ]
         
     def _init_weight(self) -> None:
         

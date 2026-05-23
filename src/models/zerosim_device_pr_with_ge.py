@@ -55,10 +55,11 @@ class Zerosim_DEVICE_PR_WITH_GE(Device_BaseModel):
         device_embeddings = se_encoder_input[:, :-1, :]
         share_global_controller = se_encoder_input[:, -1:, :]
         for sub_layer in self.network["parameter_injection_layer"]:
-            device_embeddings = sub_layer(device_embeddings, share_global_controller, parameter_embeddings, self.pr_attn_mask)
+            device_embeddings, share_global_controller = sub_layer(device_embeddings, share_global_controller, parameter_embeddings, self.pr_attn_mask)
         performance_tensors = self.performance_metric.unsqueeze(0).expand(B, -1, -1)
+        parameter_kv = torch.cat((device_embeddings, share_global_controller), dim=1)
         for sub_layer in self.network["decoder"]:
-            performance_tensors, _ = sub_layer(device_embeddings, performance_tensors)
+            performance_tensors, _ = sub_layer(parameter_kv, performance_tensors)
         output_tensors = self.network["output_layer"](performance_tensors).reshape(B, -1)
         
         return output_tensors
@@ -76,7 +77,7 @@ class Zerosim_DEVICE_PR_WITH_GE(Device_BaseModel):
     def _get_pr_attn_mask(self, adj_mask: torch.Tensor) -> torch.Tensor:
         
         N, _ = adj_mask.shape
-        add_col_tensors = torch.ones((N, 1), dtype=torch.float32, device=adj_mask.device)
+        add_col_tensors = torch.zeros((N, 1), dtype=torch.float32, device=adj_mask.device)
         add_row_tensors = torch.ones((1, N+1), dtype=torch.float32, device=adj_mask.device)
         adj_tensors = torch.cat((adj_mask, add_col_tensors), dim=-1)
         adj_tensors = torch.cat((adj_tensors, add_row_tensors), dim=0)

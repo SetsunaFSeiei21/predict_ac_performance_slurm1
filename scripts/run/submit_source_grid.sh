@@ -18,8 +18,8 @@ MODELS=(
     # gcn
     # accformer
     # zerosim_device
-    # global_encoder_wo_se
-    # global_encoder_with_se
+    global_encoder_wo_se
+    global_encoder_with_se
     # zerosim_device_pr_with_ge
     zerosim_device_wo_se
 )

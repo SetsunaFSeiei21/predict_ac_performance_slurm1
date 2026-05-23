@@ -2,7 +2,7 @@ from typing import Any, Dict, Tuple, List, Optional
 import torch.nn as nn
 import numpy as np
 from src.models import MLP, ResMLP, ACCFormer, GCN, GAT, Zerosim_Device, Zerosim_Device_WO_SE, Global_Encoder_WO_SE, Ablation_Global_Encoder_WO_CG_WO_SE,\
-    Ablation_Global_Encoder_WO_GE_WO_SE, Global_Encoder_WITH_SE, Zerosim_DEVICE_PR_WITH_GE
+    Ablation_Global_Encoder_WO_GE_WO_SE, Global_Encoder_WITH_SE, Zerosim_DEVICE_PR_WITH_GE, Zerosim_Device_WO_SE_PR_WO_GT
 
 def build_model(model_name: str, model_hyper_parameters: Dict[str, Any], input_shape: Tuple[int, int],
                 device_messages: List[Dict[str, Any]], device_level_attn_mask: Optional[np.ndarray] = None) -> nn.Module:
@@ -212,6 +212,24 @@ def build_model(model_name: str, model_hyper_parameters: Dict[str, Any], input_s
             num_heads=int(model_hyper_parameters.get("num_heads", 8)),
             embedding_layer_num=int(model_hyper_parameters.get("embedding_layer_num", 2)),
             structure_encoding_layer_num=int(model_hyper_parameters.get("structure_encoding_layer_num", 1)),
+            parameter_injection_layer_num=int(model_hyper_parameters.get("parameter_injection_layer_num", 3)),
+            decoder_layer_num=int(model_hyper_parameters.get("decoder_layer_num", 1)),
+            output_layer_num=int(model_hyper_parameters['output_layer_num']),
+            performance_num = int(model_hyper_parameters['performance_num']),
+            device_messages=device_messages,
+            adj_mask=device_level_attn_mask, 
+        )
+        return model
+    elif model_name == "zerosim_device_wo_se_pr_wo_gt":
+        if device_level_attn_mask is None:
+            raise ValueError("zerosim_device_wo_se_pr_wo_gt requires device_level_attn_mask.")
+        model = Zerosim_Device_WO_SE_PR_WO_GT(
+            feature_dim=device_feature_dim,
+            hidden_dim=int(model_hyper_parameters['hidden_dim']),
+            output_dim=int(model_hyper_parameters['output_dim']),
+            dropout=float(model_hyper_parameters.get("dropout", 0.0)),
+            num_heads=int(model_hyper_parameters.get("num_heads", 8)),
+            embedding_layer_num=int(model_hyper_parameters.get("embedding_layer_num", 2)),
             parameter_injection_layer_num=int(model_hyper_parameters.get("parameter_injection_layer_num", 3)),
             decoder_layer_num=int(model_hyper_parameters.get("decoder_layer_num", 1)),
             output_layer_num=int(model_hyper_parameters['output_layer_num']),
