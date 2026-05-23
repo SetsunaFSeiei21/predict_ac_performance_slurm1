@@ -54,9 +54,10 @@ class GAT_W_GT(Device_BaseModel):
         embedding_input = torch.cat((x, final_device_one_hot_tensors), dim=-1)
         embedding_output = self.network["embedding_layer"](embedding_input)
         embedding_output = torch.cat((embedding_output.clone(), final_global_token), dim=1)
+        global_adj_mask = self.global_mask.unsqueeze(0).expand(B, -1, -1)
         for conv, ffn, norm1, norm2 in zip(self.network["gat_layer"], self.network["ffn_layer"], self.network["norm_layer1"], self.network["norm_layer2"]):
             residual = embedding_output
-            embedding_output = conv(embedding_output, adj = self.global_mask, add_loop = False)
+            embedding_output = conv(embedding_output, adj = global_adj_mask, add_loop = False)
             embedding_output = norm1(residual + embedding_output)
             residual = embedding_output
             embedding_output = ffn(embedding_output)

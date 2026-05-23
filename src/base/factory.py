@@ -266,7 +266,7 @@ def build_model(model_name: str, model_hyper_parameters: Dict[str, Any], input_s
             dropout=float(model_hyper_parameters.get("dropout", 0.0)),
             num_heads=int(model_hyper_parameters.get("num_heads", 8)),
             embedding_layer_num=int(model_hyper_parameters.get("embedding_layer_num", 2)),
-            gcn_layer_num=int(model_hyper_parameters.get("gat_layer_num", 3)),
+            gcn_layer_num=int(model_hyper_parameters.get("gcn_layer_num", 3)),
             decoder_layer_num=int(model_hyper_parameters.get("decoder_layer_num", 1)),
             output_layer_num=int(model_hyper_parameters['output_layer_num']),
             performance_num = int(model_hyper_parameters['performance_num']),
