@@ -24,7 +24,7 @@ class Parameter_Injection_GE_Layer(nn.Module):
         tmp_device_embeddings = encoder_input_tensors[:, :-1, :]
         device_embeddings = tmp_device_embeddings + parameter_embeddings
         
-        return device_embeddings, encoder_input_tensors[:, -1:, ]
+        return device_embeddings, encoder_input_tensors[:, -1:, :]
         
     def _init_weight(self) -> None:
         
