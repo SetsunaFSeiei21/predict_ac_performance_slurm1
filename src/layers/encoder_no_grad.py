@@ -104,52 +104,47 @@ class Encoder_No_Grad(nn.Module):
         attention_mask: Optional[torch.Tensor],
         x: torch.Tensor,
     ) -> Optional[torch.Tensor]:
-        """
-        将 1/0 邻接 mask 转成 MultiheadAttention 的 additive mask。
-
-        输入:
-            attention_mask:
-                [N, N] 或 [B, N, N]
-                1 = 允许 attention
-                0 = 禁止 attention
-
-        输出:
-            mha_mask:
-                [N, N] 或 [B * num_heads, N, N]
-                0 = 允许
-                -1e9 = 禁止
-        """
 
         if attention_mask is None:
             return None
 
         mask = attention_mask.to(device=x.device)
 
-        # 防止某一行全被 mask 掉，导致 softmax NaN
+        # 情况 1：已经是 additive mask，例如 0 / -1e9
+        if torch.is_floating_point(mask) and torch.min(mask) < 0:
+            if mask.dim() == 2:
+                return mask.to(dtype=x.dtype)
+
+            if mask.dim() == 3:
+                return mask.repeat_interleave(self.num_heads, dim=0).to(dtype=x.dtype)
+
+            raise ValueError(
+                f"Unsupported additive attention_mask shape: {attention_mask.shape}. "
+                "Expected [N, N] or [B, N, N]."
+            )
+
+        # 情况 2：binary mask，1 表示允许，0 表示禁止
         if mask.dim() == 2:
             N = mask.shape[0]
             eye = torch.eye(N, device=mask.device, dtype=mask.dtype)
             mask = torch.maximum(mask, eye)
 
             mha_mask = (1.0 - mask.float()) * -1e9
-            mha_mask = mha_mask.to(dtype=x.dtype)
+            return mha_mask.to(dtype=x.dtype)
 
-        elif mask.dim() == 3:
+        if mask.dim() == 3:
             B, N, _ = mask.shape
             eye = torch.eye(N, device=mask.device, dtype=mask.dtype).unsqueeze(0)
             mask = torch.maximum(mask, eye)
 
             mha_mask = (1.0 - mask.float()) * -1e9
             mha_mask = mha_mask.repeat_interleave(self.num_heads, dim=0)
-            mha_mask = mha_mask.to(dtype=x.dtype)
+            return mha_mask.to(dtype=x.dtype)
 
-        else:
-            raise ValueError(
-                f"Unsupported attention_mask shape: {attention_mask.shape}. "
-                "Expected [N, N] or [B, N, N]."
-            )
-
-        return mha_mask
+        raise ValueError(
+            f"Unsupported attention_mask shape: {attention_mask.shape}. "
+            "Expected [N, N] or [B, N, N]."
+        )
         
     def _init_weight(self) -> None:
         # 初始化 FFN

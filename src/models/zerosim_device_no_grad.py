@@ -56,9 +56,9 @@ class Zerosim_Device_No_Grad(Device_BaseModel):
         performance_tensors = self.performance_metric.unsqueeze(0).expand(B, -1, -1)
         for sub_layer in self.network["decoder"]:
             performance_tensors, _ = sub_layer(device_tensors, performance_tensors)
-        output_ternsors = self.network['output_layer'](performance_tensors).reshape(B, -1)
+        output_tensors = self.network['output_layer'](performance_tensors).reshape(B, -1)
         
-        return output_ternsors
+        return output_tensors
         
     def _get_pr_attn_mask(self, device_num: int) -> torch.Tensor:
         
