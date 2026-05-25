@@ -14,17 +14,18 @@ mkdir -p "hpc_logs/${DATE_TAG}"
 MODELS=(
     # mlp
     # res_mlp
-    gat
-    gcn
+    # gat
+    # gcn
     # accformer
-    zerosim_device
-    global_encoder_wo_se
-    global_encoder_with_se
+    # zerosim_device
+    zerosim_device_no_grad
+    # global_encoder_wo_se
+    # global_encoder_with_se
     # zerosim_device_pr_with_ge
-    zerosim_device_wo_se
-    gat_w_gt
-    gcn_w_gt
-    zerosim_device_wo_se_pr_wo_gt
+    # zerosim_device_wo_se
+    # gat_w_gt
+    # gcn_w_gt
+    # zerosim_device_wo_se_pr_wo_gt
 )
 
 CIRCUITS=(
