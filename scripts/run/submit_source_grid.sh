@@ -18,7 +18,8 @@ MODELS=(
     # gcn
     # accformer
     # zerosim_device
-    zerosim_device_no_grad_test
+    # zerosim_device_no_grad_test
+    zerosim_device_no_grad
     # global_encoder_wo_se
     # global_encoder_with_se
     # zerosim_device_pr_with_ge
@@ -29,9 +30,9 @@ MODELS=(
 )
 
 CIRCUITS=(
-    # 5t_opamp
-    two_stage_opamp
-    two_stage_folded_opamp
+    5t_opamp
+    # two_stage_opamp
+    # two_stage_folded_opamp
 )
 
 # Smoke test:
