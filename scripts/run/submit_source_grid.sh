@@ -18,7 +18,7 @@ MODELS=(
     # gcn
     # accformer
     # zerosim_device
-    zerosim_device_no_grad
+    zerosim_device_no_grad_test
     # global_encoder_wo_se
     # global_encoder_with_se
     # zerosim_device_pr_with_ge
