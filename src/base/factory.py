@@ -149,6 +149,7 @@ def build_model(model_name: str, model_hyper_parameters: Dict[str, Any], input_s
             device_messages=device_messages,
             adj_mask=device_level_attn_mask, 
         )
+        return model
     elif model_name == 'zerosim_device_wo_se':
         if device_level_attn_mask is None:
             raise ValueError("zerosim_device_wo_se requires device_level_attn_mask.")

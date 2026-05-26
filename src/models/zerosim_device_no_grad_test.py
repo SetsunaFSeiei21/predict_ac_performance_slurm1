@@ -6,7 +6,7 @@ from typing import Dict, List, Any
 from src.base import Device_BaseModel
 from src.utils import get_mlp_layer
 from src.layers import Decoder
-from src.modules import Structure_Encoding_Layer, Parameter_Injection_Layer_No_Grad
+from src.modules import Structure_Encoding_Layer, Parameter_Injection_Layer_No_Grad_Test
 
 class Zerosim_Device_No_Grad_Test(Device_BaseModel):
     
@@ -36,7 +36,7 @@ class Zerosim_Device_No_Grad_Test(Device_BaseModel):
                 for _ in range(structure_encoding_layer_num)
             ]),
             "parameter_injection_layer": nn.ModuleList([
-                Parameter_Injection_Layer_No_Grad(input_dim=hidden_dim, hidden_dim=hidden_dim, output_dim=hidden_dim, dropout=dropout, num_heads=num_heads, attn_mask=self.attn_mask,
+                Parameter_Injection_Layer_No_Grad_Test(input_dim=hidden_dim, hidden_dim=hidden_dim, output_dim=hidden_dim, dropout=dropout, num_heads=num_heads, attn_mask=self.attn_mask,
                                         pr_attn_mask=self.pr_attn_mask) for _ in range(parameter_injection_layer_num)
             ]),
             "decoder": nn.ModuleList([
