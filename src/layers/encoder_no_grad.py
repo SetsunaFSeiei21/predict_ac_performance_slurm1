@@ -82,9 +82,9 @@ class Encoder_No_Grad(nn.Module):
         # query 保留梯度；
         # key/value 使用 detach，邻居节点参与 forward，但不从 K/V 路径接收当前节点 loss 的梯度。
         attn_out, attn_score = self.multi_head_attention(
-            query=normed_x,
+            query=normed_x.detach(),
             key=normed_x.detach(),
-            value=normed_x.detach(),
+            value=normed_x,
             attn_mask=mha_mask,
             need_weights=True,
             average_attn_weights=False,
