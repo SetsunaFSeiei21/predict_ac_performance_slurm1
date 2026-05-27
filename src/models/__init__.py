@@ -2,6 +2,7 @@ from .mlp import MLP
 from .res_mlp import ResMLP
 from .accformer import ACCFormer
 from .accformer_no_grad import ACCFormer_No_Grad
+from .accformer_no_grad_test import ACCFormer_No_Grad_Test
 from .gcn import GCN
 from .gat import GAT
 from .zerosim_device import Zerosim_Device

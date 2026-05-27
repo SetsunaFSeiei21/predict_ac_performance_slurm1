@@ -1,4 +1,4 @@
-name: "accformer_no_grad"
+name: "accformer_no_grad_test"
 
 hidden_dim: [512]
 output_dim: [1]
