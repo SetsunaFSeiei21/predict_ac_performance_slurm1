@@ -60,7 +60,7 @@ def build_model(model_name: str, model_hyper_parameters: Dict[str, Any], input_s
     elif model_name == 'accformer_no_grad':
         if device_level_attn_mask is None:
             raise ValueError("accformer_no_grad requires device_level_attn_mask.")
-        model = ACCFormer(
+        model = ACCFormer_No_Grad(
             feature_dim=device_feature_dim, 
             hidden_dim=int(model_hyper_parameters['hidden_dim']),
             output_dim=int(model_hyper_parameters['output_dim']),
