@@ -16,14 +16,14 @@ MODELS=(
     # res_mlp
     # gat
     # gcn
-    # accformer
+    accformer
     # zerosim_device
     # zerosim_device_no_grad_test
-    zerosim_device_no_grad
+    # zerosim_device_no_grad
     # global_encoder_wo_se
     # global_encoder_with_se
     # zerosim_device_pr_with_ge
-    # zerosim_device_wo_se
+    zerosim_device_wo_se
     # gat_w_gt
     # gcn_w_gt
     # zerosim_device_wo_se_pr_wo_gt
@@ -31,8 +31,8 @@ MODELS=(
 
 CIRCUITS=(
     5t_opamp
-    # two_stage_opamp
-    # two_stage_folded_opamp
+    two_stage_opamp
+    two_stage_folded_opamp
 )
 
 # Smoke test:

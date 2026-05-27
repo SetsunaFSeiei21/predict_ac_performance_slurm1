@@ -5,10 +5,6 @@ from typing import Tuple, Optional
 
 class Encoder_No_Grad_Test(nn.Module):
     
-    """_summary_
-    测试不同detach策略会造成什么样的影响，甚至是重构attention算子
-    """
-    
     def __init__(
         self,
         input_dim: int,
@@ -16,7 +12,7 @@ class Encoder_No_Grad_Test(nn.Module):
         output_dim: int,
         num_heads: int,
         dropout: float,
-        freeze_qk_proj: bool = True,
+        freeze_q_proj: bool = True,
         **kwargs,
     ) -> None:
         
@@ -34,7 +30,7 @@ class Encoder_No_Grad_Test(nn.Module):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.num_heads = num_heads
-        self.freeze_qk_proj = freeze_qk_proj
+        self.freeze_q_proj = freeze_q_proj
 
         self.multi_head_attention = nn.MultiheadAttention(
             embed_dim=input_dim,
@@ -56,13 +52,13 @@ class Encoder_No_Grad_Test(nn.Module):
 
         self._init_weight()
 
-        if self.freeze_qk_proj:
-            self._register_freeze_qk_hooks()
+        if self.freeze_q_proj:
+            self._register_freeze_q_hooks()
 
-        # 保存初始 Wq/Wk 和 bq/bk。
-        # 如果使用 AdamW + weight_decay，并且想严格固定 Wq/Wk，
-        # 需要在 optimizer.step() 后调用 restore_frozen_qk()。
-        self._save_initial_qk_state()
+        # 保存初始 Wq/bq。
+        # 如果你用 AdamW + weight_decay，并且想严格固定 Wq，
+        # 需要在 optimizer.step() 后调用 restore_frozen_q()
+        self._save_initial_q_state()
 
     def forward(
         self,
@@ -77,12 +73,12 @@ class Encoder_No_Grad_Test(nn.Module):
 
         normed_x = self.normalize_layer1(x)
 
-        # Q/K 输入 detach，V 输入保留梯度。
-        # Wq/Wk 的参数梯度会被 hook 置零。
+        # Q/K 输入 detach，V 输入保留梯度
+        # 这里只冻结 Wq 的参数梯度，Wk/Wv 仍然正常训练
         attn_out, attn_score = self.multi_head_attention(
             query=normed_x.detach(),
             key=normed_x.detach(),
-            value=normed_x,
+            value=normed_x.detach(),
             attn_mask=mha_mask,
             need_weights=True,
             average_attn_weights=False,
@@ -96,7 +92,7 @@ class Encoder_No_Grad_Test(nn.Module):
         
         return x, attn_score
 
-    def _register_freeze_qk_hooks(self) -> None:
+    def _register_freeze_q_hooks(self) -> None:
         """
         nn.MultiheadAttention uses packed parameters:
 
@@ -110,118 +106,98 @@ class Encoder_No_Grad_Test(nn.Module):
                 [D:2D]    -> bk
                 [2D:3D]   -> bv
 
-        This hook zeros gradients of Wq/Wk and bq/bk.
-        Wv, output projection, FFN, and LayerNorm remain trainable.
+        This hook zeros gradients of Wq and bq only.
+        Wk, Wv, output projection, FFN, and LayerNorm remain trainable.
         """
 
         D = self.input_dim
 
-        def zero_qk_weight_grad(grad: torch.Tensor) -> torch.Tensor:
+        def zero_q_weight_grad(grad: torch.Tensor) -> torch.Tensor:
             grad = grad.clone()
-            grad[:2 * D, :] = 0.0
+            grad[:D, :] = 0.0
             return grad
 
         self.multi_head_attention.in_proj_weight.register_hook(
-            zero_qk_weight_grad
+            zero_q_weight_grad
         )
 
         if self.multi_head_attention.in_proj_bias is not None:
-            def zero_qk_bias_grad(grad: torch.Tensor) -> torch.Tensor:
+            def zero_q_bias_grad(grad: torch.Tensor) -> torch.Tensor:
                 grad = grad.clone()
-                grad[:2 * D] = 0.0
+                grad[:D] = 0.0
                 return grad
 
             self.multi_head_attention.in_proj_bias.register_hook(
-                zero_qk_bias_grad
+                zero_q_bias_grad
             )
 
-    def _save_initial_qk_state(self) -> None:
+    def _save_initial_q_state(self) -> None:
         """
-        保存初始 Wq/Wk 和 bq/bk。
+        保存初始 Wq 和 bq。
         如果 optimizer 是 AdamW 且 weight_decay > 0，
-        仅仅把梯度置零还不能阻止 Wq/Wk 被 weight decay 改变。
-        严格冻结时，在 optimizer.step() 后调用 restore_frozen_qk()。
+        仅仅把梯度置零还不能阻止 Wq 被 weight decay 改变。
+        严格冻结时，在 optimizer.step() 后调用 restore_frozen_q()。
         """
 
         D = self.input_dim
 
         with torch.no_grad():
             self.register_buffer(
-                "_initial_qk_weight",
-                self.multi_head_attention.in_proj_weight[:2 * D, :].detach().clone(),
+                "_initial_q_weight",
+                self.multi_head_attention.in_proj_weight[:D, :].detach().clone(),
             )
 
             if self.multi_head_attention.in_proj_bias is not None:
                 self.register_buffer(
-                    "_initial_qk_bias",
-                    self.multi_head_attention.in_proj_bias[:2 * D].detach().clone(),
+                    "_initial_q_bias",
+                    self.multi_head_attention.in_proj_bias[:D].detach().clone(),
                 )
             else:
-                self._initial_qk_bias = None
+                self._initial_q_bias = None
 
     @torch.no_grad()
-    def restore_frozen_qk(self) -> None:
+    def restore_frozen_q(self) -> None:
         """
-        严格恢复 Wq/Wk 和 bq/bk 到初始化状态。
-        如果使用 AdamW + weight_decay，并且想让 Wq/Wk 完全不变，
+        严格恢复 Wq/bq 到初始化状态。
+        如果使用 AdamW + weight_decay，并且想让 Wq 完全不变，
         需要每次 optimizer.step() 后调用。
         """
 
         D = self.input_dim
 
-        self.multi_head_attention.in_proj_weight[:2 * D, :].copy_(
-            self._initial_qk_weight.to(self.multi_head_attention.in_proj_weight.device)
+        self.multi_head_attention.in_proj_weight[:D, :].copy_(
+            self._initial_q_weight.to(self.multi_head_attention.in_proj_weight.device)
         )
 
-        if self.multi_head_attention.in_proj_bias is not None and self._initial_qk_bias is not None:
-            self.multi_head_attention.in_proj_bias[:2 * D].copy_(
-                self._initial_qk_bias.to(self.multi_head_attention.in_proj_bias.device)
+        if self.multi_head_attention.in_proj_bias is not None and self._initial_q_bias is not None:
+            self.multi_head_attention.in_proj_bias[:D].copy_(
+                self._initial_q_bias.to(self.multi_head_attention.in_proj_bias.device)
             )
 
     @torch.no_grad()
-    def check_qk_change(self) -> tuple[float, float]:
+    def check_q_change(self) -> tuple[float, float]:
         """
-        检查当前 Wq/Wk 和 bq/bk 相比初始化是否发生变化。
+        检查当前 Wq/bq 相比初始化是否发生变化。
         返回：
-            qk_weight_diff_max, qk_bias_diff_max
-        """
-
-        D = self.input_dim
-
-        current_qk_weight = self.multi_head_attention.in_proj_weight[:2 * D, :]
-        qk_weight_diff_max = (
-            current_qk_weight - self._initial_qk_weight.to(current_qk_weight.device)
-        ).abs().max().item()
-
-        if self.multi_head_attention.in_proj_bias is not None and self._initial_qk_bias is not None:
-            current_qk_bias = self.multi_head_attention.in_proj_bias[:2 * D]
-            qk_bias_diff_max = (
-                current_qk_bias - self._initial_qk_bias.to(current_qk_bias.device)
-            ).abs().max().item()
-        else:
-            qk_bias_diff_max = 0.0
-
-        return qk_weight_diff_max, qk_bias_diff_max
-
-    @torch.no_grad()
-    def check_qk_distribution(self) -> tuple[float, float, float, float]:
-        """
-        检查 Wq/Wk 的均值和标准差。
-        返回：
-            Wq_mean, Wq_std, Wk_mean, Wk_std
+            Wq max diff, bq max diff
         """
 
         D = self.input_dim
 
         Wq = self.multi_head_attention.in_proj_weight[:D, :]
-        Wk = self.multi_head_attention.in_proj_weight[D:2 * D, :]
+        weight_diff_max = (
+            Wq - self._initial_q_weight.to(Wq.device)
+        ).abs().max().item()
 
-        return (
-            Wq.mean().item(),
-            Wq.std().item(),
-            Wk.mean().item(),
-            Wk.std().item(),
-        )
+        if self.multi_head_attention.in_proj_bias is not None and self._initial_q_bias is not None:
+            bq = self.multi_head_attention.in_proj_bias[:D]
+            bias_diff_max = (
+                bq - self._initial_q_bias.to(bq.device)
+            ).abs().max().item()
+        else:
+            bias_diff_max = 0.0
+
+        return weight_diff_max, bias_diff_max
 
     def _build_mha_mask(
         self,
@@ -288,28 +264,8 @@ class Encoder_No_Grad_Test(nn.Module):
                     nn.init.zeros_(sub_layer.bias)
 
         # 初始化 MultiheadAttention
-        # 这里显式让 Wq 和 Wk 处于不同分布中：
-        #   Wq: Xavier Uniform
-        #   Wk: Orthogonal
-        #   Wv: Xavier Uniform
         if hasattr(self.multi_head_attention, "in_proj_weight"):
-            D = self.input_dim
-
-            with torch.no_grad():
-                # Wq: Xavier Uniform
-                nn.init.xavier_uniform_(
-                    self.multi_head_attention.in_proj_weight[:D, :]
-                )
-
-                # Wk: Orthogonal，与 Wq 使用不同初始化分布
-                nn.init.orthogonal_(
-                    self.multi_head_attention.in_proj_weight[D:2 * D, :]
-                )
-
-                # Wv: Xavier Uniform
-                nn.init.xavier_uniform_(
-                    self.multi_head_attention.in_proj_weight[2 * D:3 * D, :]
-                )
+            nn.init.xavier_uniform_(self.multi_head_attention.in_proj_weight)
 
             if self.multi_head_attention.in_proj_bias is not None:
                 nn.init.zeros_(self.multi_head_attention.in_proj_bias)
