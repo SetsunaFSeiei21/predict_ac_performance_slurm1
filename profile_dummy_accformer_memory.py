@@ -279,6 +279,12 @@ def print_graph_result(model_name, graph_result):
     print(graph_result["top_shapes"])
 
 
+def print_relative_result(value, base_value):
+    diff = value - base_value
+    rel = diff / base_value * 100.0 if base_value != 0 else 0.0
+    return diff, rel
+
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -299,6 +305,17 @@ def main():
 
     parser.add_argument("--mask", type=str, default="full", choices=["full", "local", "random"])
     parser.add_argument("--repeat", type=int, default=20)
+
+    parser.add_argument(
+        "--models",
+        type=str,
+        nargs="+",
+        default=["accformer", "accformer_no_grad"],
+        help=(
+            "Models to profile. Example: "
+            "--models accformer accformer_no_grad accformer_no_grad_test"
+        ),
+    )
 
     parser.add_argument(
         "--profile_graph",
@@ -329,6 +346,7 @@ def main():
     )
 
     print("=" * 100)
+    print(f"models           = {args.models}")
     print(f"batch_size       = {args.batch_size}")
     print(f"device_num       = {args.device_num}")
     print(f"feature_dim      = {args.feature_dim}")
@@ -342,14 +360,17 @@ def main():
     results = {}
     graph_results = {}
 
-    for model_name in ["accformer", "accformer_no_grad"]:
+    for model_name in args.models:
         print(f"\nProfiling {model_name} ...")
 
         reset_memory()
         model = build_one_model(model_name, args, device)
 
         param_num = sum(p.numel() for p in model.parameters())
-        print(f"Params: {param_num:,}")
+        trainable_param_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+        print(f"Params          : {param_num:,}")
+        print(f"Trainable params: {trainable_param_num:,}")
 
         infer_peak, infer_time = profile_inference(model, x, args.repeat)
 
@@ -364,6 +385,8 @@ def main():
             "infer_time": infer_time,
             "train_peak": train_peak,
             "train_time": train_time,
+            "param_num": param_num,
+            "trainable_param_num": trainable_param_num,
         }
 
         print_memory_result(model_name, infer_peak, infer_time, train_peak, train_time)
@@ -384,44 +407,54 @@ def main():
     print("Summary")
     print("=" * 100)
 
-    base = results["accformer"]
-    test = results["accformer_no_grad"]
+    base_name = args.models[0]
+    base = results[base_name]
 
-    infer_mem_diff = test["infer_peak"] - base["infer_peak"]
-    train_mem_diff = test["train_peak"] - base["train_peak"]
+    for model_name in args.models:
+        cur = results[model_name]
 
-    infer_time_diff = test["infer_time"] - base["infer_time"]
-    train_time_diff = test["train_time"] - base["train_time"]
+        infer_mem_diff, infer_mem_rel = print_relative_result(cur["infer_peak"], base["infer_peak"])
+        train_mem_diff, train_mem_rel = print_relative_result(cur["train_peak"], base["train_peak"])
+        infer_time_diff, infer_time_rel = print_relative_result(cur["infer_time"], base["infer_time"])
+        train_time_diff, train_time_rel = print_relative_result(cur["train_time"], base["train_time"])
+        param_diff, param_rel = print_relative_result(cur["param_num"], base["param_num"])
+        trainable_param_diff, trainable_param_rel = print_relative_result(
+            cur["trainable_param_num"],
+            base["trainable_param_num"],
+        )
 
-    print(f"Inference memory accformer        : {base['infer_peak']:.2f} MB")
-    print(f"Inference memory accformer_no_grad: {test['infer_peak']:.2f} MB")
-    print(f"Inference memory diff             : {infer_mem_diff:.2f} MB")
-
-    print()
-
-    print(f"Training memory accformer         : {base['train_peak']:.2f} MB")
-    print(f"Training memory accformer_no_grad : {test['train_peak']:.2f} MB")
-    print(f"Training memory diff              : {train_mem_diff:.2f} MB")
-
-    print()
-
-    print(f"Inference time accformer          : {base['infer_time'] * 1000:.2f} ms")
-    print(f"Inference time accformer_no_grad  : {test['infer_time'] * 1000:.2f} ms")
-    print(f"Inference time diff               : {infer_time_diff * 1000:.2f} ms")
-
-    print()
-
-    print(f"Training time accformer           : {base['train_time'] * 1000:.2f} ms")
-    print(f"Training time accformer_no_grad   : {test['train_time'] * 1000:.2f} ms")
-    print(f"Training time diff                : {train_time_diff * 1000:.2f} ms")
+        print(f"\nModel: {model_name}")
+        print(
+            f"Params              : {cur['param_num']:12,.0f} | "
+            f"diff vs {base_name}: {param_diff:+12,.0f} ({param_rel:+.2f}%)"
+        )
+        print(
+            f"Trainable params    : {cur['trainable_param_num']:12,.0f} | "
+            f"diff vs {base_name}: {trainable_param_diff:+12,.0f} ({trainable_param_rel:+.2f}%)"
+        )
+        print(
+            f"Inference memory    : {cur['infer_peak']:12.2f} MB | "
+            f"diff vs {base_name}: {infer_mem_diff:+12.2f} MB ({infer_mem_rel:+.2f}%)"
+        )
+        print(
+            f"Training memory     : {cur['train_peak']:12.2f} MB | "
+            f"diff vs {base_name}: {train_mem_diff:+12.2f} MB ({train_mem_rel:+.2f}%)"
+        )
+        print(
+            f"Inference time      : {cur['infer_time'] * 1000:12.2f} ms | "
+            f"diff vs {base_name}: {infer_time_diff * 1000:+12.2f} ms ({infer_time_rel:+.2f}%)"
+        )
+        print(
+            f"Training time       : {cur['train_time'] * 1000:12.2f} ms | "
+            f"diff vs {base_name}: {train_time_diff * 1000:+12.2f} ms ({train_time_rel:+.2f}%)"
+        )
 
     if args.profile_graph:
         print("\n" + "=" * 100)
-        print("Graph Summary: accformer_no_grad - accformer")
+        print("Graph Summary")
         print("=" * 100)
 
-        g_base = graph_results["accformer"]
-        g_test = graph_results["accformer_no_grad"]
+        g_base = graph_results[base_name]
 
         keys = [
             "graph_nodes",
@@ -433,19 +466,23 @@ def main():
             "elapsed_ms",
         ]
 
-        for key in keys:
-            base_value = g_base[key]
-            test_value = g_test[key]
-            diff_value = test_value - base_value
-            rel_value = diff_value / base_value * 100.0 if base_value != 0 else 0.0
+        for model_name in args.models:
+            g_cur = graph_results[model_name]
 
-            print(
-                f"{key:20s}: "
-                f"accformer={base_value:10.2f} | "
-                f"no_grad={test_value:10.2f} | "
-                f"diff={diff_value:10.2f} | "
-                f"rel={rel_value:+8.2f}%"
-            )
+            print(f"\nModel: {model_name}")
+
+            for key in keys:
+                base_value = g_base[key]
+                cur_value = g_cur[key]
+                diff_value = cur_value - base_value
+                rel_value = diff_value / base_value * 100.0 if base_value != 0 else 0.0
+
+                print(
+                    f"{key:20s}: "
+                    f"{cur_value:12.2f} | "
+                    f"diff vs {base_name}: {diff_value:+12.2f} | "
+                    f"rel={rel_value:+8.2f}%"
+                )
 
 
 if __name__ == "__main__":

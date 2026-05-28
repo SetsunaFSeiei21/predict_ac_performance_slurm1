@@ -6,9 +6,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class HeadwiseTrueGradientProxyKeyAttention(nn.Module):
+class LowRankDiagonalProxyKeyAttention(nn.Module):
     """
-    Head-wise true-gradient / proxy-gradient attention.
+    Low-rank diagonal proxy-gradient attention.
+
+    Goal:
+        Completely remove real Wk score-gradient.
 
     Forward:
         Q = sg(H) Wq^0
@@ -16,22 +19,35 @@ class HeadwiseTrueGradientProxyKeyAttention(nn.Module):
         V = H Wv
         O = softmax(QK^T / sqrt(d) + mask) V Wo
 
-    Backward rule for Wk:
-        For selected heads:
-            grad(Wk_h) = real score-gradient
+    Backward approximation:
+        Wq: frozen
+        H : only receives gradient from V/content path
+        Wk: receives proxy-gradient from Wv only
 
-        For remaining heads:
-            grad(Wk_h) = value-gradient proxy
+    Proxy rule:
+        Let A = diag(alpha) + U V^T.
 
-    More explicitly:
-        grad(Wk_h) =
-            grad(Wk_score_h),                          if h in true heads
-            grad(Wv_h) * diag(alpha_h),                otherwise
+        We construct:
+            Wv_eff = Wv + A Wk - stopgrad(A Wk)
 
-    Main purpose:
-        Unlike beta-hybrid, this version does not compute real score-gradient
-        for every head and merely scale it. Instead, only a subset of heads
-        keep the score-gradient graph. The remaining heads use proxy-gradient.
+        Forward:
+            Wv_eff == Wv
+
+        Backward:
+            grad(Wk) = A^T grad(Wv_eff)
+
+        Therefore:
+            grad(Wk) ≈ [diag(alpha) + U V^T]^T grad(Wv)
+
+    Compared with diagonal proxy:
+        diagonal proxy:
+            grad(Wk) ≈ diag(alpha) grad(Wv)
+
+        low-rank diagonal proxy:
+            grad(Wk) ≈ [diag(alpha) + V U^T] grad(Wv)
+
+    This gives the proxy-gradient channel-mixing ability without computing
+    the real Wk score-gradient.
     """
 
     def __init__(
@@ -42,7 +58,9 @@ class HeadwiseTrueGradientProxyKeyAttention(nn.Module):
         bias: bool = True,
         init_alpha: float = 1.0,
         alpha_eps: float = 1e-6,
-        true_head_ratio: float = 0.5,
+        proxy_rank: int = 16,
+        low_rank_scale: float = 1.0,
+        low_rank_init_std: float = 1e-3,
         need_attn_score: bool = False,
     ) -> None:
         super().__init__()
@@ -51,16 +69,16 @@ class HeadwiseTrueGradientProxyKeyAttention(nn.Module):
             f"embed_dim={embed_dim} must be divisible by num_heads={num_heads}"
         )
         assert init_alpha > 0, "init_alpha must be positive."
-        assert 0.0 <= true_head_ratio <= 1.0, (
-            f"true_head_ratio must be in [0, 1], got {true_head_ratio}"
-        )
+        assert proxy_rank > 0, "proxy_rank must be positive."
 
         self.embed_dim = embed_dim
         self.num_heads = num_heads
         self.head_dim = embed_dim // num_heads
         self.dropout = dropout
         self.alpha_eps = alpha_eps
-        self.true_head_ratio = float(true_head_ratio)
+        self.proxy_rank = proxy_rank
+        self.low_rank_scale = low_rank_scale
+        self.low_rank_init_std = low_rank_init_std
         self.need_attn_score = need_attn_score
 
         self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
@@ -80,19 +98,18 @@ class HeadwiseTrueGradientProxyKeyAttention(nn.Module):
             )
         )
 
-        true_head_num = int(round(num_heads * true_head_ratio))
-        true_head_num = max(0, min(num_heads, true_head_num))
-
-        true_head_mask = torch.zeros(num_heads, dtype=torch.bool)
-        if true_head_num > 0:
-            true_head_mask[:true_head_num] = True
-
-        # Shape: [num_heads]
-        self.register_buffer("true_head_mask", true_head_mask)
-
-        # Shape: [embed_dim], repeated by head_dim
-        true_channel_mask = true_head_mask.repeat_interleave(self.head_dim)
-        self.register_buffer("true_channel_mask", true_channel_mask)
+        # Low-rank proxy matrix:
+        #   A = diag(alpha) + low_rank_scale * U V^T
+        #
+        # U is initialized to zero, V is initialized small random.
+        # Therefore, at initialization:
+        #   A ≈ diag(alpha)
+        #
+        # But U can receive gradient immediately because V is non-zero.
+        self.proxy_u = nn.Parameter(torch.zeros(embed_dim, proxy_rank))
+        self.proxy_v = nn.Parameter(
+            torch.empty(embed_dim, proxy_rank)
+        )
 
         self.reset_parameters()
 
@@ -103,14 +120,6 @@ class HeadwiseTrueGradientProxyKeyAttention(nn.Module):
             [embed_dim]
         """
         return F.softplus(self.log_alpha) + self.alpha_eps
-
-    @property
-    def true_head_num(self) -> int:
-        return int(self.true_head_mask.sum().item())
-
-    @property
-    def proxy_head_num(self) -> int:
-        return int((~self.true_head_mask).sum().item())
 
     def reset_parameters(self) -> None:
         nn.init.xavier_uniform_(self.q_proj.weight)
@@ -129,6 +138,12 @@ class HeadwiseTrueGradientProxyKeyAttention(nn.Module):
 
         with torch.no_grad():
             self.log_alpha.fill_(self._init_log_alpha_value)
+            self.proxy_u.zero_()
+            nn.init.normal_(
+                self.proxy_v,
+                mean=0.0,
+                std=self.low_rank_init_std,
+            )
 
         # Strictly freeze Wq/bq.
         for param in self.q_proj.parameters():
@@ -181,6 +196,56 @@ class HeadwiseTrueGradientProxyKeyAttention(nn.Module):
             bias_diff_max = 0.0
 
         return weight_diff_max, bias_diff_max
+
+    def _apply_proxy_matrix_to_weight(
+        self,
+        weight: torch.Tensor,
+        alpha_channel: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Apply A Wk without explicitly constructing full A.
+
+        A = diag(alpha) + low_rank_scale * U V^T
+
+        weight:
+            [D, D]
+
+        return:
+            [D, D]
+        """
+        diag_part = alpha_channel.view(-1, 1) * weight
+
+        # V^T Wk: [r, D]
+        low_rank_mid = self.proxy_v.transpose(0, 1) @ weight
+
+        # U (V^T Wk): [D, D]
+        low_rank_part = self.proxy_u @ low_rank_mid
+
+        return diag_part + self.low_rank_scale * low_rank_part
+
+    def _apply_proxy_matrix_to_bias(
+        self,
+        bias: torch.Tensor,
+        alpha_channel: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Apply A bk without explicitly constructing full A.
+
+        bias:
+            [D]
+
+        return:
+            [D]
+        """
+        diag_part = alpha_channel * bias
+
+        # V^T b: [r]
+        low_rank_mid = self.proxy_v.transpose(0, 1) @ bias
+
+        # U (V^T b): [D]
+        low_rank_part = self.proxy_u @ low_rank_mid
+
+        return diag_part + self.low_rank_scale * low_rank_part
 
     def _shape_to_heads(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -279,49 +344,6 @@ class HeadwiseTrueGradientProxyKeyAttention(nn.Module):
         out = torch.matmul(attn_score, v)
         return out, attn_score
 
-    def _compute_k_by_heads(self, x_qk: torch.Tensor) -> torch.Tensor:
-        """
-        Compute K head by head.
-
-        For true-gradient heads:
-            K_h = x_qk @ Wk_h^T + b_h
-            with autograd enabled for Wk_h.
-
-        For proxy heads:
-            K_h is computed under torch.no_grad(),
-            so Wk_h does not receive score-gradient.
-
-        Returns:
-            k_raw: [B, N, D]
-        """
-        B, N, _ = x_qk.shape
-
-        k_weight = self.k_proj.weight
-        k_bias = self.k_proj.bias
-
-        k_heads = []
-
-        for h in range(self.num_heads):
-            start = h * self.head_dim
-            end = (h + 1) * self.head_dim
-
-            weight_h = k_weight[start:end, :]
-            bias_h = k_bias[start:end] if k_bias is not None else None
-
-            if bool(self.true_head_mask[h].item()):
-                # This head keeps real score-gradient for Wk_h.
-                k_h = F.linear(x_qk, weight_h, bias_h)
-            else:
-                # This head only participates in forward.
-                # Its Wk_h update will come from proxy-gradient through V path.
-                with torch.no_grad():
-                    k_h = F.linear(x_qk, weight_h, bias_h)
-
-            k_heads.append(k_h)
-
-        k_raw = torch.cat(k_heads, dim=-1)
-        return k_raw
-
     def forward(
         self,
         x: torch.Tensor,
@@ -333,43 +355,41 @@ class HeadwiseTrueGradientProxyKeyAttention(nn.Module):
         """
         alpha_channel = self.alpha.to(device=x.device, dtype=x.dtype)
 
-        true_channel_mask = self.true_channel_mask.to(device=x.device)
-        proxy_channel_mask = (~true_channel_mask).to(dtype=x.dtype)
-
         # Q/K use detached hidden states, so Q/K paths do not send gradients to H.
         x_qk = x.detach()
 
         # Q is frozen and no graph is needed.
+        # K is also computed under no_grad, so Wk receives no real score-gradient.
         with torch.no_grad():
             q = self.q_proj(x_qk)
+            k_raw = self.k_proj(x_qk)
 
-        # K:
-        #   true heads: keep Wk score-gradient
-        #   proxy heads: no Wk score-gradient
-        k_raw = self._compute_k_by_heads(x_qk)
+        # K forward uses alpha only as a forward scaling.
+        # Detach alpha here so alpha itself is not trained by score-gradient.
+        k = k_raw * alpha_channel.detach().view(1, 1, -1)
 
-        # Channel-wise alpha participates in K forward.
-        k = k_raw * alpha_channel.view(1, 1, -1)
-
-        # V path with diagonal proxy gradient for proxy heads only.
+        # Low-rank diagonal proxy-gradient path.
         #
         # Forward:
-        #   v_weight_eff == v_proj.weight
+        #   proxy_weight - proxy_weight.detach() == 0
+        #   v_weight_eff == Wv
         #
         # Backward:
-        #   grad(Wv) normal;
-        #   grad(Wk rows of proxy heads) receives alpha_c * grad(Wv_c);
-        #   grad(Wk rows of true heads) receives no proxy-gradient.
-        row_scale = (proxy_channel_mask * alpha_channel.detach()).view(-1, 1)
-
-        v_weight_eff = self.v_proj.weight + row_scale * (
-            self.k_proj.weight - self.k_proj.weight.detach()
+        #   grad(Wk), grad(alpha), grad(U), grad(V)
+        #   are obtained from the V/content path through proxy_weight.
+        proxy_weight = self._apply_proxy_matrix_to_weight(
+            self.k_proj.weight,
+            alpha_channel,
         )
 
+        v_weight_eff = self.v_proj.weight + proxy_weight - proxy_weight.detach()
+
         if self.v_proj.bias is not None:
-            v_bias_eff = self.v_proj.bias + proxy_channel_mask * alpha_channel.detach() * (
-                self.k_proj.bias - self.k_proj.bias.detach()
+            proxy_bias = self._apply_proxy_matrix_to_bias(
+                self.k_proj.bias,
+                alpha_channel,
             )
+            v_bias_eff = self.v_proj.bias + proxy_bias - proxy_bias.detach()
         else:
             v_bias_eff = None
 
@@ -407,20 +427,20 @@ class HeadwiseTrueGradientProxyKeyAttention(nn.Module):
 
 class Encoder_No_Grad_Test(nn.Module):
     """
-    Encoder block with head-wise true-gradient / proxy-gradient attention.
+    Encoder block with low-rank diagonal proxy-gradient attention.
 
     Main approximation:
-        Some heads keep real Wk score-gradient.
-        Other heads use diagonal value-gradient proxy.
+        grad(Wk) ≈ [diag(alpha) + U V^T]^T grad(Wv)
 
     Removed:
         Q/K score-gradient-to-hidden path
         Wq update
+        real Wk score-gradient
 
     Preserved:
-        real Wk score-gradient for selected heads
-        proxy Wk update for remaining heads
+        forward topology-aware attention routing
         V/content-gradient-to-hidden path
+        proxy Wk update from Wv
         out projection / FFN / LayerNorm
     """
 
@@ -432,7 +452,9 @@ class Encoder_No_Grad_Test(nn.Module):
         num_heads: int,
         dropout: float,
         init_alpha: float = 1.0,
-        true_head_ratio: float = 0.5,
+        proxy_rank: int = 16,
+        low_rank_scale: float = 1.0,
+        low_rank_init_std: float = 1e-3,
         need_attn_score: bool = False,
         **kwargs,
     ) -> None:
@@ -450,16 +472,18 @@ class Encoder_No_Grad_Test(nn.Module):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.num_heads = num_heads
+        self.proxy_rank = proxy_rank
         self.need_attn_score = need_attn_score
-        self.true_head_ratio = float(true_head_ratio)
 
-        self.attention = HeadwiseTrueGradientProxyKeyAttention(
+        self.attention = LowRankDiagonalProxyKeyAttention(
             embed_dim=input_dim,
             num_heads=num_heads,
             dropout=dropout,
             bias=True,
             init_alpha=init_alpha,
-            true_head_ratio=true_head_ratio,
+            proxy_rank=proxy_rank,
+            low_rank_scale=low_rank_scale,
+            low_rank_init_std=low_rank_init_std,
             need_attn_score=need_attn_score,
         )
 
@@ -507,14 +531,8 @@ class Encoder_No_Grad_Test(nn.Module):
     def get_alpha(self) -> list[float]:
         return self.attention.alpha.detach().cpu().tolist()
 
-    def get_true_head_ratio(self) -> float:
-        return self.true_head_ratio
-
-    def get_true_head_num(self) -> int:
-        return self.attention.true_head_num
-
-    def get_proxy_head_num(self) -> int:
-        return self.attention.proxy_head_num
+    def get_proxy_rank(self) -> int:
+        return self.proxy_rank
 
     def _init_weight(self) -> None:
         self.attention.reset_parameters()
