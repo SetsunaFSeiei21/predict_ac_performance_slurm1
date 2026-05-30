@@ -387,7 +387,7 @@ def main():
         "--models",
         type=str,
         nargs="+",
-        default=["gat", "gat_no_grad_test"],
+        default=["gat", "gat_split_full", "gat_no_grad_test"],
         help=(
             "Models to profile. Example: "
             "--models gat gat_no_grad_test"
