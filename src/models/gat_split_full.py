@@ -30,8 +30,10 @@ class DenseGATConv_SplitFull(nn.Module):
         - No detach is applied to W_score.
         - No proxy-gradient injection is applied.
 
-    This means gat_split_full and gat_no_grad_test have the same score/value
-    projection structure, making them a fair comparison pair.
+    Implementation fairness:
+        - Score projection is also computed head-by-head, matching gat_no_grad_test.
+        - Value weight is also obtained through _build_value_weight_eff().
+        - last_attention is detached, matching gat_no_grad_test.
     """
 
     def __init__(
@@ -78,9 +80,22 @@ class DenseGATConv_SplitFull(nn.Module):
         else:
             self.register_parameter("bias", None)
 
+        # Kept only for implementation symmetry with gat_no_grad_test.
+        # All heads are true-gradient heads in this full-gradient baseline.
+        true_head_mask = torch.ones(heads, dtype=torch.bool)
+        self.register_buffer("true_head_mask", true_head_mask)
+
         self.last_attention: Optional[torch.Tensor] = None
 
         self.reset_parameters()
+
+    @property
+    def true_head_num(self) -> int:
+        return int(self.true_head_mask.sum().item())
+
+    @property
+    def proxy_head_num(self) -> int:
+        return int((~self.true_head_mask).sum().item())
 
     def reset_parameters(self) -> None:
         nn.init.xavier_uniform_(self.lin_score.weight)
@@ -145,10 +160,13 @@ class DenseGATConv_SplitFull(nn.Module):
         # ------------------------------------------------------------
         # 1. Score path: full-gradient GAT additive attention
         # ------------------------------------------------------------
-        h_score = self.lin_score(x).view(B, N, self.heads, self.out_channels)
+        h_score_raw = self._compute_score_projection_by_heads(x)
+        h_score = h_score_raw.view(B, N, self.heads, self.out_channels)
 
-        alpha_src = (h_score * self.att_src).sum(dim=-1)  # [B, N, H]
-        alpha_dst = (h_score * self.att_dst).sum(dim=-1)  # [B, N, H]
+        att_src, att_dst = self._build_attention_parameters()
+
+        alpha_src = (h_score * att_src).sum(dim=-1)  # [B, N, H]
+        alpha_dst = (h_score * att_dst).sum(dim=-1)  # [B, N, H]
 
         # score[i, j, h] = score from target node i to source node j.
         # Shape: [B, N, N, H]
@@ -167,7 +185,10 @@ class DenseGATConv_SplitFull(nn.Module):
         # ------------------------------------------------------------
         # 2. Value path: full-gradient value projection
         # ------------------------------------------------------------
-        h_value = self.lin_value(x).view(B, N, self.heads, self.out_channels)
+        value_weight_eff = self._build_value_weight_eff()
+
+        h_value = F.linear(x, value_weight_eff, bias=None)
+        h_value = h_value.view(B, N, self.heads, self.out_channels)
 
         # out_i = sum_j alpha_ij * h_value_j
         # attention: [B, target_i, source_j, H]
@@ -198,6 +219,54 @@ class DenseGATConv_SplitFull(nn.Module):
             out = out.squeeze(0)
 
         return out
+
+    def _compute_score_projection_by_heads(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Compute h_score = W_score x head by head.
+
+        This intentionally mirrors gat_no_grad_test's implementation style.
+        The only difference is that all heads keep real score-gradient.
+        """
+
+        score_weight = self.lin_score.weight
+        score_heads = []
+
+        for h in range(self.heads):
+            start = h * self.out_channels
+            end = (h + 1) * self.out_channels
+
+            weight_h = score_weight[start:end, :]
+
+            # Full-gradient baseline:
+            # every head uses normal F.linear, no detach, no torch.no_grad().
+            h_score = F.linear(x, weight_h, bias=None)
+
+            score_heads.append(h_score)
+
+        return torch.cat(score_heads, dim=-1)
+
+    def _build_value_weight_eff(self) -> torch.Tensor:
+        """
+        Full-gradient baseline.
+
+        For implementation symmetry with gat_no_grad_test, value path also
+        retrieves its weight through this method.
+
+        Difference from gat_no_grad_test:
+            No proxy term is added.
+            value_weight_eff == lin_value.weight both in forward and backward.
+        """
+
+        return self.lin_value.weight
+
+    def _build_attention_parameters(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Full-gradient baseline.
+
+        All attention vectors receive normal gradients.
+        """
+
+        return self.att_src, self.att_dst
 
     def _prepare_adj(
         self,
@@ -260,6 +329,9 @@ class DenseGATConv_SplitFull(nn.Module):
                 adj[b_idx, n_idx, n_idx] = 1.0
 
         return adj
+
+    def get_true_proxy_head_num(self) -> Tuple[int, int]:
+        return self.true_head_num, self.proxy_head_num
 
 
 class GAT_Split_Full(Device_BaseModel):
@@ -425,6 +497,12 @@ class GAT_Split_Full(Device_BaseModel):
         output_tensors = self.network["output_layer"](performance_tensors).reshape(B, -1)
 
         return output_tensors
+
+    def get_true_proxy_head_num(self) -> List[Tuple[int, int]]:
+        return [
+            conv.get_true_proxy_head_num()
+            for conv in self.network["graph_conv_layer"]
+        ]
 
     def _init_weight(self) -> None:
         nn.init.normal_(self.performance_metric, mean=0.0, std=0.02)
