@@ -199,7 +199,7 @@ class DenseGATConv_NoGrad(nn.Module):
         if self.training and self.dropout > 0:
             attention = F.dropout(attention, p=self.dropout, training=True)
 
-        self.last_attention = attention
+        self.last_attention = attention.detach()
 
         # ------------------------------------------------------------
         # 2. Value path with proxy-gradient injection

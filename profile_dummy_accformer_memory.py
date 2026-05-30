@@ -87,6 +87,8 @@ def build_one_model(model_name, args, device):
         "init_alpha": args.init_alpha,
         "true_head_ratio": args.true_head_ratio,
         "need_attn_score": args.need_attn_score,
+        "proxy_scale": args.proxy_scale,
+        "freeze_proxy_attention": args.freeze_proxy_attention,
     }
 
     model = build_model(
@@ -353,7 +355,7 @@ def main():
         "--init_alpha",
         type=float,
         default=1.0,
-        help="Initial alpha for no-grad / proxy-gradient attention models.",
+        help="Initial alpha for ACCFormer/ZeroSim no-grad attention models.",
     )
     parser.add_argument(
         "--true_head_ratio",
@@ -364,7 +366,18 @@ def main():
     parser.add_argument(
         "--need_attn_score",
         action="store_true",
-        help="Whether to explicitly return/store attention scores.",
+        help="Whether to explicitly return/store attention scores for supported models.",
+    )
+    parser.add_argument(
+        "--proxy_scale",
+        type=float,
+        default=1.0,
+        help="Scale of value-gradient proxy injected into score projection.",
+    )
+    parser.add_argument(
+        "--freeze_proxy_attention",
+        action="store_true",
+        help="Detach attention vectors of proxy heads for supported GAT no-grad models.",
     )
 
     parser.add_argument("--mask", type=str, default="full", choices=["full", "local", "random"])
@@ -374,10 +387,10 @@ def main():
         "--models",
         type=str,
         nargs="+",
-        default=["gat", "gat_no_grad", "gat_no_grad_test"],
+        default=["gat", "gat_no_grad_test"],
         help=(
             "Models to profile. Example: "
-            "--models gat gat_no_grad gat_no_grad_test"
+            "--models gat gat_no_grad_test"
         ),
     )
 
@@ -430,6 +443,8 @@ def main():
     print(f"init_alpha                     = {args.init_alpha}")
     print(f"true_head_ratio                = {args.true_head_ratio}")
     print(f"need_attn_score                = {args.need_attn_score}")
+    print(f"proxy_scale                    = {args.proxy_scale}")
+    print(f"freeze_proxy_attention         = {args.freeze_proxy_attention}")
     print(f"mask                           = {args.mask}")
     print(f"repeat                         = {args.repeat}")
     print(f"profile_graph                  = {args.profile_graph}")
