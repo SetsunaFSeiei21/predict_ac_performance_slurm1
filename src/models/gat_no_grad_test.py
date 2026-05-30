@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 
 from typing import Dict, List, Any, Optional, Tuple
@@ -7,257 +8,401 @@ from typing import Dict, List, Any, Optional, Tuple
 from src.base import Device_BaseModel
 from src.utils import get_mlp_layer
 from src.layers import Decoder
-from src.layers.encoder_no_grad_test import HeadwiseTrueGradientProxyKeyAttention
 
 
-class DenseNoGradGATv2Conv(nn.Module):
+class DenseGATConv_NoGrad(nn.Module):
     """
-    Dense graph masked multi-head attention operator based on
-    HeadwiseTrueGradientProxyKeyAttention.
+    Dense GAT convolution with head-wise true/proxy-gradient control.
 
-    Purpose:
-        Replace torch_geometric.nn.dense.DenseGATConv inside the existing GAT top model.
+    This module keeps the original GAT-style additive attention form:
 
-    Input:
-        x:
-            [B, N, D]
-        adj:
-            [N, N] or [B, N, N]
+        h_score_i = W_score x_i
+        h_value_i = W_value x_i
 
-    Output:
-        out:
-            [B, N, D]
+        e_ij = LeakyReLU(a_src^T h_score_i + a_dst^T h_score_j)
+        alpha_ij = softmax_j(e_ij)
+        out_i = sum_j alpha_ij h_value_j
 
-    Note:
-        This is not a literal PyG GATv2 implementation:
-            e_ij = a^T LeakyReLU(W_s x_i + W_t x_j)
+    For true-gradient heads:
+        W_score receives real score-gradient from e_ij / softmax.
 
-        Instead, it is a dense graph-masked Transformer-style attention operator:
-            softmax(QK^T / sqrt(d) + graph_mask) V
+    For proxy-gradient heads:
+        W_score does not receive real score-gradient.
+        Instead, W_score receives value-gradient proxy through:
 
-        The GATv2-like part is that attention is dynamically computed from
-        node features under graph topology masking. The special contribution is
-        inherited from HeadwiseTrueGradientProxyKeyAttention:
-            - frozen Q
-            - detached Q/K hidden path
-            - true-gradient heads
-            - proxy-gradient heads
+            W_value_eff = W_value + proxy_mask * proxy_scale *
+                          (W_score - W_score.detach())
+
+    Forward:
+        W_value_eff == W_value
+
+    Backward:
+        proxy rows of W_score receive value-gradient proxy.
     """
 
     def __init__(
         self,
         in_channels: int,
         out_channels: int,
-        heads: int,
-        dropout: float = 0.0,
+        heads: int = 1,
         concat: bool = True,
+        negative_slope: float = 0.2,
+        dropout: float = 0.0,
         bias: bool = True,
-        init_alpha: float = 1.0,
         true_head_ratio: float = 0.5,
-        need_attn_score: bool = False,
+        proxy_scale: float = 1.0,
+        freeze_proxy_attention: bool = False,
+        safe_self_loop_for_empty_row: bool = True,
     ) -> None:
         super().__init__()
 
-        if not concat:
-            raise ValueError(
-                "DenseNoGradGATv2Conv currently assumes concat=True, "
-                "because the original GAT uses DenseGATConv(..., heads=num_heads) "
-                "and expects output dimension hidden_dim."
-            )
-
-        expected_dim = out_channels * heads
-        if in_channels != expected_dim:
-            raise ValueError(
-                f"Expected in_channels == out_channels * heads, "
-                f"got in_channels={in_channels}, out_channels={out_channels}, heads={heads}. "
-                f"For the current GAT config, use out_channels=hidden_dim//num_heads."
-            )
+        assert 0.0 <= true_head_ratio <= 1.0, (
+            f"true_head_ratio must be in [0, 1], got {true_head_ratio}"
+        )
 
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.heads = heads
-        self.dropout = dropout
         self.concat = concat
-        self.need_attn_score = need_attn_score
+        self.negative_slope = negative_slope
+        self.dropout = dropout
+        self.true_head_ratio = float(true_head_ratio)
+        self.proxy_scale = float(proxy_scale)
+        self.freeze_proxy_attention = freeze_proxy_attention
+        self.safe_self_loop_for_empty_row = safe_self_loop_for_empty_row
 
-        self.attention = HeadwiseTrueGradientProxyKeyAttention(
-            embed_dim=in_channels,
-            num_heads=heads,
-            dropout=dropout,
-            bias=bias,
-            init_alpha=init_alpha,
-            true_head_ratio=true_head_ratio,
-            need_attn_score=need_attn_score,
+        self.lin_score = nn.Linear(
+            in_features=in_channels,
+            out_features=heads * out_channels,
+            bias=False,
         )
 
-        self.last_attn_score: Optional[torch.Tensor] = None
+        self.lin_value = nn.Linear(
+            in_features=in_channels,
+            out_features=heads * out_channels,
+            bias=False,
+        )
+
+        self.att_src = nn.Parameter(torch.empty(1, 1, heads, out_channels))
+        self.att_dst = nn.Parameter(torch.empty(1, 1, heads, out_channels))
+
+        if bias:
+            if concat:
+                self.bias = nn.Parameter(torch.empty(heads * out_channels))
+            else:
+                self.bias = nn.Parameter(torch.empty(out_channels))
+        else:
+            self.register_parameter("bias", None)
+
+        true_head_num = int(round(heads * true_head_ratio))
+        true_head_num = max(0, min(heads, true_head_num))
+
+        true_head_mask = torch.zeros(heads, dtype=torch.bool)
+        if true_head_num > 0:
+            true_head_mask[:true_head_num] = True
+
+        self.register_buffer("true_head_mask", true_head_mask)
+
+        self.last_attention: Optional[torch.Tensor] = None
+
+        self.reset_parameters()
+
+    @property
+    def true_head_num(self) -> int:
+        return int(self.true_head_mask.sum().item())
+
+    @property
+    def proxy_head_num(self) -> int:
+        return int((~self.true_head_mask).sum().item())
+
+    def reset_parameters(self) -> None:
+        nn.init.xavier_uniform_(self.lin_score.weight)
+
+        # Make W_value initially identical to W_score.
+        # This makes the initial forward behavior closer to standard GAT.
+        with torch.no_grad():
+            self.lin_value.weight.copy_(self.lin_score.weight)
+
+        nn.init.xavier_uniform_(self.att_src)
+        nn.init.xavier_uniform_(self.att_dst)
+
+        if self.bias is not None:
+            nn.init.zeros_(self.bias)
 
     def forward(
         self,
         x: torch.Tensor,
         adj: torch.Tensor,
-        add_loop: bool = False,
+        mask: Optional[torch.Tensor] = None,
+        add_loop: bool = True,
     ) -> torch.Tensor:
         """
-        Keep the call signature close to DenseGATConv:
-
-            conv(x, adj=self.adj_tensors, add_loop=False)
-
-        x:
-            [B, N, D]
-        adj:
-            [N, N] or [B, N, N]
-            binary adjacency, where 1 means allowed edge and 0 means masked edge.
-            Additive masks with negative values are also accepted.
-        add_loop:
-            Whether to allow self-attention on diagonal positions.
+        Args:
+            x:
+                [B, N, Fin] or [N, Fin]
+            adj:
+                [N, N] or [B, N, N], binary adjacency.
+                adj[i, j] = 1 means target node i can attend to source node j.
+            mask:
+                Optional valid node mask, [B, N] or [N].
+            add_loop:
+                Whether to add self-loops.
 
         Returns:
-            [B, N, D]
+            out:
+                [B, N, H * Fout] if concat=True
+                [B, N, Fout] if concat=False
         """
 
         squeeze_batch = False
+
         if x.dim() == 2:
-            # For robustness only. Current repo normally uses [B, N, D].
             x = x.unsqueeze(0)
             squeeze_batch = True
 
         if x.dim() != 3:
             raise ValueError(
-                f"Expected x shape [B, N, D] or [N, D], got {tuple(x.shape)}"
+                f"Expected x shape [B, N, Fin] or [N, Fin], got {tuple(x.shape)}"
             )
 
-        attention_mask = self._build_additive_graph_mask(
+        B, N, _ = x.shape
+
+        adj = self._prepare_adj(
             adj=adj,
-            x=x,
+            batch_size=B,
+            node_num=N,
+            device=x.device,
+            dtype=x.dtype,
             add_loop=add_loop,
         )
 
-        out, attn_score = self.attention(
-            x=x,
-            attention_mask=attention_mask,
-        )
+        # ------------------------------------------------------------
+        # 1. Score path: GAT additive attention
+        # ------------------------------------------------------------
+        h_score_raw = self._compute_score_projection_by_heads(x)
+        h_score = h_score_raw.view(B, N, self.heads, self.out_channels)
 
-        self.last_attn_score = attn_score
+        att_src, att_dst = self._build_attention_parameters()
+
+        alpha_src = (h_score * att_src).sum(dim=-1)  # [B, N, H]
+        alpha_dst = (h_score * att_dst).sum(dim=-1)  # [B, N, H]
+
+        # score[i, j, h] = score from target node i to source node j.
+        # Shape: [B, N, N, H]
+        score = alpha_src.unsqueeze(2) + alpha_dst.unsqueeze(1)
+        score = F.leaky_relu(score, negative_slope=self.negative_slope)
+
+        score = score.masked_fill(adj.unsqueeze(-1) <= 0, -1e9)
+
+        attention = torch.softmax(score, dim=2)
+
+        if self.training and self.dropout > 0:
+            attention = F.dropout(attention, p=self.dropout, training=True)
+
+        self.last_attention = attention
+
+        # ------------------------------------------------------------
+        # 2. Value path with proxy-gradient injection
+        # ------------------------------------------------------------
+        value_weight_eff = self._build_value_weight_eff()
+
+        h_value = F.linear(x, value_weight_eff, bias=None)
+        h_value = h_value.view(B, N, self.heads, self.out_channels)
+
+        # out_i = sum_j alpha_ij * h_value_j
+        # attention: [B, target_i, source_j, H]
+        # h_value:   [B, source_j, H, C]
+        # out:       [B, target_i, H, C]
+        out = torch.einsum("bijh,bjhc->bihc", attention, h_value)
+
+        if self.concat:
+            out = out.reshape(B, N, self.heads * self.out_channels)
+        else:
+            out = out.mean(dim=2)
+
+        if self.bias is not None:
+            out = out + self.bias
+
+        if mask is not None:
+            if mask.dim() == 1:
+                mask = mask.unsqueeze(0)
+
+            if mask.shape != (B, N):
+                raise ValueError(
+                    f"Expected mask shape [B, N] = {(B, N)}, got {tuple(mask.shape)}"
+                )
+
+            out = out * mask.to(device=out.device, dtype=out.dtype).unsqueeze(-1)
 
         if squeeze_batch:
             out = out.squeeze(0)
 
         return out
 
-    def _build_additive_graph_mask(
+    def _compute_score_projection_by_heads(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Compute h_score = W_score x head by head.
+
+        True heads:
+            W_score receives real score-gradient.
+
+        Proxy heads:
+            W_score participates in forward under no_grad,
+            so it does not receive real score-gradient from attention scores.
+            Its update comes from value-gradient proxy in _build_value_weight_eff().
+        """
+
+        score_weight = self.lin_score.weight
+        score_heads = []
+
+        for h in range(self.heads):
+            start = h * self.out_channels
+            end = (h + 1) * self.out_channels
+
+            weight_h = score_weight[start:end, :]
+
+            if bool(self.true_head_mask[h].item()):
+                h_score = F.linear(x, weight_h, bias=None)
+            else:
+                with torch.no_grad():
+                    h_score = F.linear(x, weight_h, bias=None)
+
+            score_heads.append(h_score)
+
+        return torch.cat(score_heads, dim=-1)
+
+    def _build_value_weight_eff(self) -> torch.Tensor:
+        """
+        Forward:
+            value_weight_eff == lin_value.weight
+
+        Backward:
+            For proxy heads:
+                lin_score.weight receives proxy-gradient from value path.
+
+            For true heads:
+                lin_score.weight does not receive this proxy-gradient,
+                because it already receives real score-gradient.
+        """
+
+        proxy_head_mask = (~self.true_head_mask).to(
+            device=self.lin_value.weight.device,
+            dtype=self.lin_value.weight.dtype,
+        )
+
+        proxy_row_mask = proxy_head_mask.repeat_interleave(self.out_channels)
+        proxy_row_mask = proxy_row_mask.view(-1, 1)
+
+        value_weight_eff = self.lin_value.weight + (
+            self.proxy_scale
+            * proxy_row_mask
+            * (self.lin_score.weight - self.lin_score.weight.detach())
+        )
+
+        return value_weight_eff
+
+    def _build_attention_parameters(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        By default:
+            att_src / att_dst still receive score-gradient for all heads.
+
+        If freeze_proxy_attention=True:
+            proxy heads' attention vectors are detached.
+        """
+
+        if not self.freeze_proxy_attention:
+            return self.att_src, self.att_dst
+
+        true_mask = self.true_head_mask.to(device=self.att_src.device)
+        true_mask = true_mask.view(1, 1, self.heads, 1)
+
+        att_src = torch.where(true_mask, self.att_src, self.att_src.detach())
+        att_dst = torch.where(true_mask, self.att_dst, self.att_dst.detach())
+
+        return att_src, att_dst
+
+    def _prepare_adj(
         self,
         adj: torch.Tensor,
-        x: torch.Tensor,
+        batch_size: int,
+        node_num: int,
+        device: torch.device,
+        dtype: torch.dtype,
         add_loop: bool,
     ) -> torch.Tensor:
         """
-        Convert graph adjacency into additive attention mask.
+        Convert adjacency to [B, N, N] binary mask.
 
-        Why convert manually?
-            Encoder_No_Grad_Test internally treats binary masks as:
-                1 allowed, 0 blocked,
-            and automatically adds self-loops.
-
-            But the original GAT calls:
-                DenseGATConv(..., add_loop=False)
-
-            Therefore, to preserve the original behavior, we pass an additive
-            mask directly:
-                0      -> allowed
-                -1e9   -> blocked
-
-            Additive masks bypass the internal self-loop addition logic.
+        If a row has no valid neighbor, we force a self-loop for that row
+        to avoid softmax over all -1e9.
         """
 
-        mask = adj.to(device=x.device)
+        adj = adj.to(device=device, dtype=dtype)
 
-        # Already additive mask: allowed positions are usually 0,
-        # blocked positions are negative large values.
-        if torch.is_floating_point(mask) and torch.min(mask) < 0:
-            if mask.dim() not in (2, 3):
+        if adj.dim() == 2:
+            if adj.shape != (node_num, node_num):
                 raise ValueError(
-                    f"Unsupported additive adj shape: {tuple(mask.shape)}. "
-                    "Expected [N, N] or [B, N, N]."
+                    f"Expected adj shape [N, N] = {(node_num, node_num)}, "
+                    f"got {tuple(adj.shape)}"
+                )
+            adj = adj.unsqueeze(0).expand(batch_size, -1, -1)
+
+        elif adj.dim() == 3:
+            if adj.shape[1:] != (node_num, node_num):
+                raise ValueError(
+                    f"Expected adj shape [B, N, N] with N={node_num}, "
+                    f"got {tuple(adj.shape)}"
                 )
 
-            if add_loop:
-                mask = mask.clone()
-                if mask.dim() == 2:
-                    n = mask.shape[0]
-                    idx = torch.arange(n, device=mask.device)
-                    mask[idx, idx] = 0.0
-                else:
-                    _, n, _ = mask.shape
-                    idx = torch.arange(n, device=mask.device)
-                    mask[:, idx, idx] = 0.0
-
-            return mask.to(dtype=x.dtype)
-
-        # Binary adjacency mask.
-        mask = mask.float()
-
-        if mask.dim() == 2:
-            n, m = mask.shape
-            if n != m:
+            if adj.shape[0] == 1 and batch_size != 1:
+                adj = adj.expand(batch_size, -1, -1)
+            elif adj.shape[0] != batch_size:
                 raise ValueError(
-                    f"Expected square adj [N, N], got {tuple(mask.shape)}"
+                    f"Expected adj batch size {batch_size}, got {adj.shape[0]}"
                 )
 
-            if add_loop:
-                eye = torch.eye(n, device=mask.device, dtype=mask.dtype)
-                mask = torch.maximum(mask, eye)
+        else:
+            raise ValueError(
+                f"Expected adj shape [N, N] or [B, N, N], got {tuple(adj.shape)}"
+            )
 
-            additive_mask = (1.0 - mask) * -1e9
-            return additive_mask.to(dtype=x.dtype)
+        adj = (adj > 0).to(dtype=dtype)
 
-        if mask.dim() == 3:
-            b, n, m = mask.shape
-            if n != m:
-                raise ValueError(
-                    f"Expected square batched adj [B, N, N], got {tuple(mask.shape)}"
-                )
+        if add_loop:
+            eye = torch.eye(node_num, device=device, dtype=dtype).unsqueeze(0)
+            adj = torch.maximum(adj, eye)
 
-            if add_loop:
-                eye = torch.eye(n, device=mask.device, dtype=mask.dtype).unsqueeze(0)
-                mask = torch.maximum(mask, eye)
+        if self.safe_self_loop_for_empty_row:
+            row_sum = adj.sum(dim=-1)
+            empty_rows = row_sum <= 0
 
-            additive_mask = (1.0 - mask) * -1e9
-            return additive_mask.to(dtype=x.dtype)
+            if empty_rows.any():
+                adj = adj.clone()
+                b_idx, n_idx = torch.where(empty_rows)
+                adj[b_idx, n_idx, n_idx] = 1.0
 
-        raise ValueError(
-            f"Unsupported adj shape: {tuple(mask.shape)}. "
-            "Expected [N, N] or [B, N, N]."
-        )
+        return adj
 
-    def restore_frozen_q(self) -> None:
-        self.attention.restore_frozen_q()
-
-    def check_q_change(self) -> Tuple[float, float]:
-        return self.attention.check_q_change()
-
-    def get_alpha(self) -> List[float]:
-        return self.attention.alpha.detach().cpu().tolist()
-
-    def get_true_head_num(self) -> int:
-        return self.attention.true_head_num
-
-    def get_proxy_head_num(self) -> int:
-        return self.attention.proxy_head_num
+    def get_true_proxy_head_num(self) -> Tuple[int, int]:
+        return self.true_head_num, self.proxy_head_num
 
 
 class GAT_No_Grad_Test(Device_BaseModel):
     """
-    GAT top model with DenseGATConv replaced by DenseNoGradGATv2Conv.
+    GAT top model using DenseGATConv_NoGrad.
 
-    Compared with src/models/gat.py:
-        Original:
-            DenseGATConv -> residual + norm -> FFN -> residual + norm
+    This keeps the same top-level structure as src/models/gat.py:
 
-        New:
-            DenseNoGradGATv2Conv -> residual + norm -> FFN -> residual + norm
+        embedding_layer
+        -> graph_conv_layer
+        -> residual + norm
+        -> FFN
+        -> residual + norm
+        -> decoder
+        -> output_layer
 
-    This keeps the top-level architecture almost unchanged.
+    The only replacement is:
+        DenseGATConv -> DenseGATConv_NoGrad
     """
 
     def __init__(
@@ -274,13 +419,13 @@ class GAT_No_Grad_Test(Device_BaseModel):
         performance_num: int,
         device_messages: List[Dict[str, Any]],
         adj_mask: np.ndarray,
-        init_alpha: float = 1.0,
         true_head_ratio: float = 0.5,
-        need_attn_score: bool = False,
+        proxy_scale: float = 1.0,
+        freeze_proxy_attention: bool = False,
     ) -> None:
 
         assert hidden_dim % num_heads == 0, (
-            f"hidden_dim={hidden_dim} must be divisible by num_heads={num_heads}"
+            f"hidden_dim:{hidden_dim} must be divisible by num_heads:{num_heads}"
         )
 
         super().__init__(device_messages)
@@ -289,9 +434,9 @@ class GAT_No_Grad_Test(Device_BaseModel):
         self.gat_layer_num = gat_layer_num
         self.decoder_layer_num = decoder_layer_num
         self.output_layer_num = output_layer_num
-        self.num_heads = num_heads
         self.true_head_ratio = true_head_ratio
-        self.need_attn_score = need_attn_score
+        self.proxy_scale = proxy_scale
+        self.freeze_proxy_attention = freeze_proxy_attention
 
         self.performance_metric = nn.Parameter(torch.empty(performance_num, hidden_dim))
         self.register_buffer("adj_tensors", torch.as_tensor(adj_mask, dtype=torch.float32))
@@ -308,16 +453,17 @@ class GAT_No_Grad_Test(Device_BaseModel):
             ),
 
             "graph_conv_layer": nn.ModuleList([
-                DenseNoGradGATv2Conv(
+                DenseGATConv_NoGrad(
                     in_channels=hidden_dim,
                     out_channels=hidden_dim // num_heads,
                     heads=num_heads,
-                    dropout=dropout,
                     concat=True,
+                    negative_slope=0.2,
+                    dropout=dropout,
                     bias=True,
-                    init_alpha=init_alpha,
                     true_head_ratio=true_head_ratio,
-                    need_attn_score=need_attn_score,
+                    proxy_scale=proxy_scale,
+                    freeze_proxy_attention=freeze_proxy_attention,
                 )
                 for _ in range(gat_layer_num)
             ]),
@@ -407,25 +553,9 @@ class GAT_No_Grad_Test(Device_BaseModel):
 
         return output_tensors
 
-    def restore_frozen_q(self) -> None:
-        for conv in self.network["graph_conv_layer"]:
-            conv.restore_frozen_q()
-
-    def check_q_change(self) -> List[Tuple[float, float]]:
-        return [
-            conv.check_q_change()
-            for conv in self.network["graph_conv_layer"]
-        ]
-
-    def get_alpha(self) -> List[List[float]]:
-        return [
-            conv.get_alpha()
-            for conv in self.network["graph_conv_layer"]
-        ]
-
     def get_true_proxy_head_num(self) -> List[Tuple[int, int]]:
         return [
-            (conv.get_true_head_num(), conv.get_proxy_head_num())
+            conv.get_true_proxy_head_num()
             for conv in self.network["graph_conv_layer"]
         ]
 

@@ -132,7 +132,6 @@ def build_model(model_name: str, model_hyper_parameters: Dict[str, Any], input_s
     elif model_name == 'gat_no_grad_test':
         if device_level_attn_mask is None:
             raise ValueError("GAT_No_Grad_Test requires device_level_attn_mask.")
-
         model = GAT_No_Grad_Test(
             feature_dim=device_feature_dim,
             hidden_dim=int(model_hyper_parameters['hidden_dim']),
@@ -146,11 +145,12 @@ def build_model(model_name: str, model_hyper_parameters: Dict[str, Any], input_s
             performance_num=int(model_hyper_parameters['performance_num']),
             device_messages=device_messages,
             adj_mask=device_level_attn_mask,
-            init_alpha=float(model_hyper_parameters.get("init_alpha", 1.0)),
             true_head_ratio=float(model_hyper_parameters.get("true_head_ratio", 0.5)),
-            need_attn_score=bool(model_hyper_parameters.get("need_attn_score", False)),
+            proxy_scale=float(model_hyper_parameters.get("proxy_scale", 1.0)),
+            freeze_proxy_attention=bool(
+                model_hyper_parameters.get("freeze_proxy_attention", False)
+            ),
         )
-
         return model
     elif model_name == 'zerosim_device':
         if device_level_attn_mask is None:

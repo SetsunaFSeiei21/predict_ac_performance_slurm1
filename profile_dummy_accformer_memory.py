@@ -82,6 +82,11 @@ def build_one_model(model_name, args, device):
         # GCN/GAT-specific layers
         "gcn_layer_num": args.gcn_layer_num,
         "gat_layer_num": args.gat_layer_num,
+
+        # No-grad / proxy-gradient attention parameters
+        "init_alpha": args.init_alpha,
+        "true_head_ratio": args.true_head_ratio,
+        "need_attn_score": args.need_attn_score,
     }
 
     model = build_model(
@@ -343,6 +348,25 @@ def main():
         help="Number of GAT layers for GAT-style models.",
     )
 
+    # No-grad / proxy-gradient attention parameters
+    parser.add_argument(
+        "--init_alpha",
+        type=float,
+        default=1.0,
+        help="Initial alpha for no-grad / proxy-gradient attention models.",
+    )
+    parser.add_argument(
+        "--true_head_ratio",
+        type=float,
+        default=0.5,
+        help="Ratio of heads that keep true score-gradient.",
+    )
+    parser.add_argument(
+        "--need_attn_score",
+        action="store_true",
+        help="Whether to explicitly return/store attention scores.",
+    )
+
     parser.add_argument("--mask", type=str, default="full", choices=["full", "local", "random"])
     parser.add_argument("--repeat", type=int, default=20)
 
@@ -350,10 +374,10 @@ def main():
         "--models",
         type=str,
         nargs="+",
-        default=["accformer", "accformer_no_grad"],
+        default=["gat", "gat_no_grad", "gat_no_grad_test"],
         help=(
             "Models to profile. Example: "
-            "--models accformer accformer_no_grad accformer_no_grad_test"
+            "--models gat gat_no_grad gat_no_grad_test"
         ),
     )
 
@@ -403,6 +427,9 @@ def main():
     print(f"decoder_layer_num              = {args.decoder_layer_num}")
     print(f"output_layer_num               = {args.output_layer_num}")
     print(f"performance_num                = {args.performance_num}")
+    print(f"init_alpha                     = {args.init_alpha}")
+    print(f"true_head_ratio                = {args.true_head_ratio}")
+    print(f"need_attn_score                = {args.need_attn_score}")
     print(f"mask                           = {args.mask}")
     print(f"repeat                         = {args.repeat}")
     print(f"profile_graph                  = {args.profile_graph}")
