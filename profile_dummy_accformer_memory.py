@@ -67,11 +67,21 @@ def build_one_model(model_name, args, device):
         "output_dim": args.output_dim,
         "dropout": args.dropout,
         "num_heads": args.num_heads,
+
+        # Common layers
         "embedding_layer_num": args.embedding_layer_num,
         "encoder_layer_num": args.encoder_layer_num,
         "decoder_layer_num": args.decoder_layer_num,
         "output_layer_num": args.output_layer_num,
         "performance_num": args.performance_num,
+
+        # ZeroSim-specific layers
+        "structure_encoding_layer_num": args.structure_encoding_layer_num,
+        "parameter_injection_layer_num": args.parameter_injection_layer_num,
+
+        # GCN/GAT-specific layers
+        "gcn_layer_num": args.gcn_layer_num,
+        "gat_layer_num": args.gat_layer_num,
     }
 
     model = build_model(
@@ -297,11 +307,41 @@ def main():
     parser.add_argument("--output_dim", type=int, default=1)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--num_heads", type=int, default=8)
+
+    # Common architecture parameters
     parser.add_argument("--embedding_layer_num", type=int, default=2)
     parser.add_argument("--encoder_layer_num", type=int, default=3)
     parser.add_argument("--decoder_layer_num", type=int, default=1)
     parser.add_argument("--output_layer_num", type=int, default=2)
     parser.add_argument("--performance_num", type=int, default=5)
+
+    # ZeroSim-specific architecture parameters
+    parser.add_argument(
+        "--structure_encoding_layer_num",
+        type=int,
+        default=3,
+        help="Number of structure encoding layers for ZeroSim-style models.",
+    )
+    parser.add_argument(
+        "--parameter_injection_layer_num",
+        type=int,
+        default=3,
+        help="Number of parameter injection layers for ZeroSim-style models.",
+    )
+
+    # GCN/GAT-specific architecture parameters
+    parser.add_argument(
+        "--gcn_layer_num",
+        type=int,
+        default=3,
+        help="Number of GCN layers for GCN-style models.",
+    )
+    parser.add_argument(
+        "--gat_layer_num",
+        type=int,
+        default=3,
+        help="Number of GAT layers for GAT-style models.",
+    )
 
     parser.add_argument("--mask", type=str, default="full", choices=["full", "local", "random"])
     parser.add_argument("--repeat", type=int, default=20)
@@ -346,15 +386,26 @@ def main():
     )
 
     print("=" * 100)
-    print(f"models           = {args.models}")
-    print(f"batch_size       = {args.batch_size}")
-    print(f"device_num       = {args.device_num}")
-    print(f"feature_dim      = {args.feature_dim}")
-    print(f"hidden_dim       = {args.hidden_dim}")
-    print(f"encoder_layers   = {args.encoder_layer_num}")
-    print(f"num_heads        = {args.num_heads}")
-    print(f"mask             = {args.mask}")
-    print(f"profile_graph    = {args.profile_graph}")
+    print(f"models                         = {args.models}")
+    print(f"batch_size                     = {args.batch_size}")
+    print(f"device_num                     = {args.device_num}")
+    print(f"feature_dim                    = {args.feature_dim}")
+    print(f"hidden_dim                     = {args.hidden_dim}")
+    print(f"output_dim                     = {args.output_dim}")
+    print(f"dropout                        = {args.dropout}")
+    print(f"num_heads                      = {args.num_heads}")
+    print(f"embedding_layer_num            = {args.embedding_layer_num}")
+    print(f"encoder_layer_num              = {args.encoder_layer_num}")
+    print(f"structure_encoding_layer_num   = {args.structure_encoding_layer_num}")
+    print(f"parameter_injection_layer_num  = {args.parameter_injection_layer_num}")
+    print(f"gcn_layer_num                  = {args.gcn_layer_num}")
+    print(f"gat_layer_num                  = {args.gat_layer_num}")
+    print(f"decoder_layer_num              = {args.decoder_layer_num}")
+    print(f"output_layer_num               = {args.output_layer_num}")
+    print(f"performance_num                = {args.performance_num}")
+    print(f"mask                           = {args.mask}")
+    print(f"repeat                         = {args.repeat}")
+    print(f"profile_graph                  = {args.profile_graph}")
     print("=" * 100)
 
     results = {}
