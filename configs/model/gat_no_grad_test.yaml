@@ -13,4 +13,4 @@ performance_num: [5]
 # GAT additive attention true/proxy-gradient parameters
 true_head_ratio: [0.0]
 proxy_scale: [1.0]
-freeze_proxy_attention: [false]
+freeze_proxy_attention: [true]
