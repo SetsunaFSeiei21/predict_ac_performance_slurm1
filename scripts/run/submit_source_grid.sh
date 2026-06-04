@@ -20,6 +20,7 @@ MODELS=(
     # accformer_no_grad
     # accformer_no_grad_test
     # zerosim_device
+    zerosim_device_final_no_grad_test
     # zerosim_device_no_grad_test
     # zerosim_device_no_grad
     # global_encoder_wo_se
@@ -29,14 +30,14 @@ MODELS=(
     # zerosim_device_wo_se_no_grad
     # zerosim_device_wo_se_no_grad_test
     # gat_w_gt
-    gat_no_grad_test
+    # gat_no_grad_test
     # gcn_w_gt
     # zerosim_device_wo_se_pr_wo_gt
 )
 
 CIRCUITS=(
     # 5t_opamp
-    two_stage_opamp
+    # two_stage_opamp
     two_stage_folded_opamp
 )
 

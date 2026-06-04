@@ -1,14 +1,14 @@
 import torch
 import torch.nn as nn
-from src.layers import Encoder_No_Grad
+from src.layers import Encoder_No_Grad_Test
 
 class Structure_Encoding_Layer_No_Grad(nn.Module):
     
     def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, dropout: float, num_heads: int, attn_mask: torch.Tensor) -> None:
         
         super().__init__()
-        self.structure_refining = Encoder_No_Grad(input_dim=input_dim, hidden_dim=hidden_dim, output_dim=hidden_dim, num_heads=num_heads, dropout=dropout)
-        self.context_enhancing = Encoder_No_Grad(input_dim=hidden_dim, hidden_dim=hidden_dim, output_dim=output_dim, num_heads=num_heads, dropout=dropout)
+        self.structure_refining = Encoder_No_Grad_Test(input_dim=input_dim, hidden_dim=hidden_dim, output_dim=hidden_dim, num_heads=num_heads, dropout=dropout)
+        self.context_enhancing = Encoder_No_Grad_Test(input_dim=hidden_dim, hidden_dim=hidden_dim, output_dim=output_dim, num_heads=num_heads, dropout=dropout)
         self.register_buffer("attn_mask", attn_mask)
         self._init_weight()
         

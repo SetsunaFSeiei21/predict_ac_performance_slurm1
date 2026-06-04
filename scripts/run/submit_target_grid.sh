@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-PROJECT_ROOT="/public/home/202411094934/python_project/ACCFormer"
+PROJECT_ROOT="/public/home/202411094934/python_project/predict_ac_performance"
 cd "${PROJECT_ROOT}"
 
 # ================================
