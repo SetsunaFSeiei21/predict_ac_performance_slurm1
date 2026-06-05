@@ -405,8 +405,14 @@ def summarize_fold_results(
     train_r2_np = np.asarray(all_train_r2_per_metric, dtype=np.float64)
     val_r2_np = np.asarray(all_val_r2_per_metric, dtype=np.float64)
 
+    train_mean_r2_np = np.asarray(all_train_mean_r2, dtype=np.float64)
+    val_mean_r2_np = np.asarray(all_val_mean_r2, dtype=np.float64)
+
+    ddof = _stat_ddof(len(fold_results))
+
     return {
         "hyper_parameters": deepcopy(hyper),
+        "num_folds": len(fold_results),
 
         "all_train_loss": all_train_loss,
         "all_train_mse_loss": all_train_mse,
@@ -430,11 +436,39 @@ def summarize_fold_results(
         "mean_val_mse_loss": mean_curve(all_val_mse),
         "mean_val_mae_loss": mean_curve(all_val_mae),
 
+        "std_train_loss": std_curve(all_train_loss),
+        "std_train_mse_loss": std_curve(all_train_mse),
+        "std_train_mae_loss": std_curve(all_train_mae),
+
+        "std_val_loss": std_curve(all_val_loss),
+        "std_val_mse_loss": std_curve(all_val_mse),
+        "std_val_mae_loss": std_curve(all_val_mae),
+
+        "var_train_loss": var_curve(all_train_loss),
+        "var_train_mse_loss": var_curve(all_train_mse),
+        "var_train_mae_loss": var_curve(all_train_mae),
+
+        "var_val_loss": var_curve(all_val_loss),
+        "var_val_mse_loss": var_curve(all_val_mse),
+        "var_val_mae_loss": var_curve(all_val_mae),
+
         "mean_train_r2_per_metric": train_r2_np.mean(axis=0).tolist(),
         "mean_val_r2_per_metric": val_r2_np.mean(axis=0).tolist(),
 
-        "mean_train_r2": float(np.mean(all_train_mean_r2)),
-        "mean_val_r2": float(np.mean(all_val_mean_r2)),
+        "std_train_r2_per_metric": train_r2_np.std(axis=0, ddof=ddof).tolist(),
+        "std_val_r2_per_metric": val_r2_np.std(axis=0, ddof=ddof).tolist(),
+
+        "var_train_r2_per_metric": train_r2_np.var(axis=0, ddof=ddof).tolist(),
+        "var_val_r2_per_metric": val_r2_np.var(axis=0, ddof=ddof).tolist(),
+
+        "mean_train_r2": float(train_mean_r2_np.mean()),
+        "mean_val_r2": float(val_mean_r2_np.mean()),
+
+        "std_train_r2": float(train_mean_r2_np.std(ddof=ddof)),
+        "std_val_r2": float(val_mean_r2_np.std(ddof=ddof)),
+
+        "var_train_r2": float(train_mean_r2_np.var(ddof=ddof)),
+        "var_val_r2": float(val_mean_r2_np.var(ddof=ddof)),
     }
 
 
@@ -480,6 +514,34 @@ def save_summaries_to_excel(
             "mean_val_loss": dumps_json(summary["mean_val_loss"]),
             "mean_val_mse_loss": dumps_json(summary["mean_val_mse_loss"]),
             "mean_val_mae_loss": dumps_json(summary["mean_val_mae_loss"]),
+            
+            "num_folds": summary["num_folds"],
+
+            "std_train_r2": summary["std_train_r2"],
+            "std_val_r2": summary["std_val_r2"],
+            "var_train_r2": summary["var_train_r2"],
+            "var_val_r2": summary["var_val_r2"],
+
+            "std_train_r2_per_metric": dumps_json(summary["std_train_r2_per_metric"]),
+            "std_val_r2_per_metric": dumps_json(summary["std_val_r2_per_metric"]),
+            "var_train_r2_per_metric": dumps_json(summary["var_train_r2_per_metric"]),
+            "var_val_r2_per_metric": dumps_json(summary["var_val_r2_per_metric"]),
+
+            "std_train_loss": dumps_json(summary["std_train_loss"]),
+            "std_train_mse_loss": dumps_json(summary["std_train_mse_loss"]),
+            "std_train_mae_loss": dumps_json(summary["std_train_mae_loss"]),
+
+            "std_val_loss": dumps_json(summary["std_val_loss"]),
+            "std_val_mse_loss": dumps_json(summary["std_val_mse_loss"]),
+            "std_val_mae_loss": dumps_json(summary["std_val_mae_loss"]),
+
+            "var_train_loss": dumps_json(summary["var_train_loss"]),
+            "var_train_mse_loss": dumps_json(summary["var_train_mse_loss"]),
+            "var_train_mae_loss": dumps_json(summary["var_train_mae_loss"]),
+
+            "var_val_loss": dumps_json(summary["var_val_loss"]),
+            "var_val_mse_loss": dumps_json(summary["var_val_mse_loss"]),
+            "var_val_mae_loss": dumps_json(summary["var_val_mae_loss"]),
         }
 
         rows.append(row)
@@ -572,3 +634,16 @@ def train_final_model_on_full_data(
         "train_mse_loss": train_mse_curve,
         "train_mae_loss": train_mae_curve,
     }
+    
+def _stat_ddof(num_items: int) -> int:
+    return 1 if num_items > 1 else 0
+
+
+def std_curve(curves: List[List[float]]) -> List[float]:
+    arr = np.asarray(curves, dtype=np.float64)
+    return arr.std(axis=0, ddof=_stat_ddof(arr.shape[0])).tolist()
+
+
+def var_curve(curves: List[List[float]]) -> List[float]:
+    arr = np.asarray(curves, dtype=np.float64)
+    return arr.var(axis=0, ddof=_stat_ddof(arr.shape[0])).tolist()

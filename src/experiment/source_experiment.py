@@ -87,6 +87,9 @@ def main(cfg) -> None:
     best_summary = None
     best_hyper = None
     best_mean_val_r2 = -1e18
+        
+    second_best_summary = None
+    second_best_hyper = None
 
     for hyper_idx, hyper in enumerate(all_hypers):
         logger.info(
@@ -148,21 +151,43 @@ def main(cfg) -> None:
             save_path=str(result_dir / "result.xlsx"),
         )
 
-        if summary["mean_val_r2"] > best_mean_val_r2:
-            best_mean_val_r2 = summary["mean_val_r2"]
-            best_hyper = deepcopy(hyper)
-            best_summary = deepcopy(summary)
+    ranked_summaries = sorted(
+        summaries,
+        key=lambda item: float(item["mean_val_r2"]),
+        reverse=True,
+    )
 
-            with open(result_dir / "hyper_parameters.json", "w", encoding="utf-8") as f:
-                json.dump(best_hyper, f, indent=4, ensure_ascii=False)
+    for rank, item in enumerate(ranked_summaries, start=1):
+        item["rank"] = rank
 
-            with open(result_dir / "best_cv_result.json", "w", encoding="utf-8") as f:
-                json.dump(best_summary, f, indent=4, ensure_ascii=False)
+    with open(result_dir / "all_cv_results.json", "w", encoding="utf-8") as f:
+        json.dump(summaries, f, indent=4, ensure_ascii=False)
 
-            logger.info(
-                f"New best hyperparameters found. "
-                f"mean_val_r2={best_mean_val_r2:.6f}"
-            )
+    with open(result_dir / "ranked_cv_results.json", "w", encoding="utf-8") as f:
+        json.dump(ranked_summaries, f, indent=4, ensure_ascii=False)
+
+    best_summary = deepcopy(ranked_summaries[0])
+    best_hyper = deepcopy(best_summary["hyper_parameters"])
+    best_mean_val_r2 = best_summary["mean_val_r2"]
+
+    with open(result_dir / "hyper_parameters.json", "w", encoding="utf-8") as f:
+        json.dump(best_hyper, f, indent=4, ensure_ascii=False)
+
+    with open(result_dir / "best_hyper_parameters.json", "w", encoding="utf-8") as f:
+        json.dump(best_hyper, f, indent=4, ensure_ascii=False)
+
+    with open(result_dir / "best_cv_result.json", "w", encoding="utf-8") as f:
+        json.dump(best_summary, f, indent=4, ensure_ascii=False)
+
+    if len(ranked_summaries) >= 2:
+        second_best_summary = deepcopy(ranked_summaries[1])
+        second_best_hyper = deepcopy(second_best_summary["hyper_parameters"])
+
+        with open(result_dir / "second_best_hyper_parameters.json", "w", encoding="utf-8") as f:
+            json.dump(second_best_hyper, f, indent=4, ensure_ascii=False)
+
+        with open(result_dir / "second_best_cv_result.json", "w", encoding="utf-8") as f:
+            json.dump(second_best_summary, f, indent=4, ensure_ascii=False)
 
     if best_hyper is None:
         raise RuntimeError("No valid hyperparameter group was evaluated.")
@@ -182,6 +207,11 @@ def main(cfg) -> None:
         "model_state_dict": final_model.state_dict(),
         "best_hyper_parameters": best_hyper,
         "best_cv_result": best_summary,
+
+        "second_best_hyper_parameters": second_best_hyper,
+        "second_best_cv_result": second_best_summary,
+
+        "all_cv_results": summaries,
 
         "x_scaler": final_loader_dict["x_scaler"],
         "y_scaler": final_loader_dict["y_scaler"],
