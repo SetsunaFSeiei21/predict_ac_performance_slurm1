@@ -383,6 +383,18 @@ def train_one_fold(
 def mean_curve(curves: List[List[float]]) -> List[float]:
     return np.asarray(curves, dtype=np.float64).mean(axis=0).tolist()
 
+def _stat_ddof(num_items: int) -> int:
+    return 1 if num_items > 1 else 0
+
+
+def std_curve(curves: List[List[float]]) -> List[float]:
+    arr = np.asarray(curves, dtype=np.float64)
+    return arr.std(axis=0, ddof=_stat_ddof(arr.shape[0])).tolist()
+
+
+def var_curve(curves: List[List[float]]) -> List[float]:
+    arr = np.asarray(curves, dtype=np.float64)
+    return arr.var(axis=0, ddof=_stat_ddof(arr.shape[0])).tolist()
 
 def summarize_fold_results(
     hyper: Dict[str, Any],
