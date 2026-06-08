@@ -12,13 +12,13 @@ mkdir -p "hpc_logs/${DATE_TAG}"
 # Experiment scope
 # ================================
 MODELS=(
-    mlp
-    res_mlp
+    # mlp
+    # res_mlp
     # gat
     # gcn
     # accformer
-    # accformer_no_grad
-    # accformer_no_grad_test
+    accformer_no_grad
+    accformer_no_grad_test
     # zerosim_device
     # zerosim_device_final_no_grad_test
     # zerosim_device_no_grad_test
@@ -38,7 +38,7 @@ MODELS=(
 CIRCUITS=(
     # 5t_opamp
     two_stage_opamp
-    # two_stage_folded_opamp
+    two_stage_folded_opamp
 )
 
 # Smoke test:

@@ -17,6 +17,37 @@ from src.base import build_model
 from src.base.data_engine import build_full_train_dataloader
 from src.dataset.dataloader import recover_y_to_original_scale
 
+TARGET_NAMES = [
+    "slewrate_pos",
+    "dc_gain",
+    "ugf",
+    "phase_margin",
+    "cmrr",
+]
+
+
+def add_per_metric_loss_to_row(row: dict, prefix: str, metrics: dict) -> dict:
+    """
+    把 per-metric loss 展开到结果 row 里面。
+
+    prefix 可以是:
+        train
+        val
+        test
+    """
+    if "loss_per_metric" not in metrics:
+        return row
+
+    for i, name in enumerate(TARGET_NAMES):
+        row[f"{prefix}_{name}_loss"] = metrics["loss_per_metric"][i]
+        row[f"{prefix}_{name}_mse"] = metrics["mse_per_metric"][i]
+        row[f"{prefix}_{name}_mae"] = metrics["mae_per_metric"][i]
+
+    row[f"{prefix}_average_loss"] = metrics["average_loss"]
+    row[f"{prefix}_average_mse"] = metrics["average_mse"]
+    row[f"{prefix}_average_mae"] = metrics["average_mae"]
+
+    return row
 
 def set_seed(seed: int) -> None:
     random.seed(seed)
@@ -169,19 +200,20 @@ def run_one_epoch(
     device: torch.device,
     alpha: float,
     train: bool,
-) -> Dict[str, float]:
+) -> Dict[str, Any]:
     if train:
         model.train()
     else:
         model.eval()
 
-    mse_fn = nn.MSELoss(reduction="mean")
-    mae_fn = nn.L1Loss(reduction="mean")
-
     total_loss_sum = 0.0
     mse_loss_sum = 0.0
     mae_loss_sum = 0.0
     sample_num = 0
+
+    # 新增：用于统计每个指标的平方误差和绝对误差
+    se_sum = None
+    ae_sum = None
 
     for batch in data_loader:
         x = batch["device_features"].to(device)
@@ -198,9 +230,24 @@ def run_one_epoch(
                     f"Prediction shape {pred.shape} != target shape {y.shape}"
                 )
 
-            mse_loss = mse_fn(pred, y)
-            mae_loss = mae_fn(pred, y)
-            loss = alpha * mae_loss + (1.0 - alpha) * mse_loss
+            # ------------------------------------------------------------
+            # 原来是 nn.MSELoss(reduction="mean")，会把所有指标平均成一个数。
+            # 现在改成先保留每个指标自己的 loss。
+            # pred/y shape: [batch_size, 5]
+            # dim=0 表示对 batch 求平均，保留 5 个指标维度。
+            # ------------------------------------------------------------
+            diff = pred - y
+
+            mse_per_metric_batch = diff.pow(2).mean(dim=0)
+            mae_per_metric_batch = diff.abs().mean(dim=0)
+
+            loss_per_metric_batch = (
+                alpha * mae_per_metric_batch
+                + (1.0 - alpha) * mse_per_metric_batch
+            )
+
+            # 训练仍然使用总 loss，不改变反向传播逻辑
+            loss = loss_per_metric_batch.mean()
 
             if train:
                 loss.backward()
@@ -208,15 +255,56 @@ def run_one_epoch(
 
         batch_size = x.shape[0]
 
+        # ------------------------------------------------------------
+        # 原来的总 loss 统计，保留
+        # ------------------------------------------------------------
         total_loss_sum += float(loss.item()) * batch_size
-        mse_loss_sum += float(mse_loss.item()) * batch_size
-        mae_loss_sum += float(mae_loss.item()) * batch_size
+        mse_loss_sum += float(mse_per_metric_batch.mean().item()) * batch_size
+        mae_loss_sum += float(mae_per_metric_batch.mean().item()) * batch_size
         sample_num += batch_size
 
+        # ------------------------------------------------------------
+        # 新增：累计每个指标的误差总和
+        # 这里用 sum(dim=0)，最后除以 sample_num，避免不同 batch size 带来的平均误差。
+        # ------------------------------------------------------------
+        se_batch_sum = diff.pow(2).sum(dim=0).detach()
+        ae_batch_sum = diff.abs().sum(dim=0).detach()
+
+        if se_sum is None:
+            se_sum = torch.zeros_like(se_batch_sum)
+            ae_sum = torch.zeros_like(ae_batch_sum)
+
+        se_sum += se_batch_sum
+        ae_sum += ae_batch_sum
+
+    if sample_num == 0:
+        raise RuntimeError("data_loader 为空，无法计算 loss")
+
+    # 每个指标的 MSE / MAE
+    mse_per_metric = se_sum / sample_num
+    mae_per_metric = ae_sum / sample_num
+
+    # 每个指标的混合 loss
+    loss_per_metric = (
+        alpha * mae_per_metric
+        + (1.0 - alpha) * mse_per_metric
+    )
+
     return {
+        # 原来的字段，保留，旧代码不会炸
         "loss": total_loss_sum / sample_num,
         "mse_loss": mse_loss_sum / sample_num,
         "mae_loss": mae_loss_sum / sample_num,
+
+        # 新增：每个指标自己的 loss
+        "loss_per_metric": loss_per_metric.detach().cpu().tolist(),
+        "mse_per_metric": mse_per_metric.detach().cpu().tolist(),
+        "mae_per_metric": mae_per_metric.detach().cpu().tolist(),
+
+        # 新增：方便直接填表格 Average Loss
+        "average_loss": loss_per_metric.mean().item(),
+        "average_mse": mse_per_metric.mean().item(),
+        "average_mae": mae_per_metric.mean().item(),
     }
 
 
@@ -286,6 +374,14 @@ def train_one_fold(
     val_loss_curve = []
     val_mse_curve = []
     val_mae_curve = []
+    
+    train_loss_per_metric_curve = []
+    train_mse_per_metric_curve = []
+    train_mae_per_metric_curve = []
+
+    val_loss_per_metric_curve = []
+    val_mse_per_metric_curve = []
+    val_mae_per_metric_curve = []
 
     epochs = int(cfg.exp.epochs)
     alpha = float(cfg.exp.alpha)
@@ -326,6 +422,14 @@ def train_one_fold(
         val_loss_curve.append(val_metrics["loss"])
         val_mse_curve.append(val_metrics["mse_loss"])
         val_mae_curve.append(val_metrics["mae_loss"])
+        
+        train_loss_per_metric_curve.append(train_metrics["loss_per_metric"])
+        train_mse_per_metric_curve.append(train_metrics["mse_per_metric"])
+        train_mae_per_metric_curve.append(train_metrics["mae_per_metric"])
+
+        val_loss_per_metric_curve.append(val_metrics["loss_per_metric"])
+        val_mse_per_metric_curve.append(val_metrics["mse_per_metric"])
+        val_mae_per_metric_curve.append(val_metrics["mae_per_metric"])
 
         progress.set_postfix(
             {
@@ -371,6 +475,14 @@ def train_one_fold(
         "val_loss": val_loss_curve,
         "val_mse_loss": val_mse_curve,
         "val_mae_loss": val_mae_curve,
+        
+        "train_loss_per_metric": train_loss_per_metric_curve,
+        "train_mse_per_metric": train_mse_per_metric_curve,
+        "train_mae_per_metric": train_mae_per_metric_curve,
+
+        "val_loss_per_metric": val_loss_per_metric_curve,
+        "val_mse_per_metric": val_mse_per_metric_curve,
+        "val_mae_per_metric": val_mae_per_metric_curve,
 
         "train_r2_per_metric": train_r2["r2_per_metric"],
         "train_mean_r2": train_r2["mean_r2"],
@@ -407,6 +519,14 @@ def summarize_fold_results(
     all_val_loss = [item["val_loss"] for item in fold_results]
     all_val_mse = [item["val_mse_loss"] for item in fold_results]
     all_val_mae = [item["val_mae_loss"] for item in fold_results]
+    
+    all_train_loss_per_metric = [item["train_loss_per_metric"] for item in fold_results]
+    all_train_mse_per_metric = [item["train_mse_per_metric"] for item in fold_results]
+    all_train_mae_per_metric = [item["train_mae_per_metric"] for item in fold_results]
+
+    all_val_loss_per_metric = [item["val_loss_per_metric"] for item in fold_results]
+    all_val_mse_per_metric = [item["val_mse_per_metric"] for item in fold_results]
+    all_val_mae_per_metric = [item["val_mae_per_metric"] for item in fold_results]
 
     all_train_r2_per_metric = [item["train_r2_per_metric"] for item in fold_results]
     all_val_r2_per_metric = [item["val_r2_per_metric"] for item in fold_results]
@@ -416,6 +536,14 @@ def summarize_fold_results(
 
     train_r2_np = np.asarray(all_train_r2_per_metric, dtype=np.float64)
     val_r2_np = np.asarray(all_val_r2_per_metric, dtype=np.float64)
+    
+    train_loss_per_metric_np = np.asarray(all_train_loss_per_metric, dtype=np.float64)
+    train_mse_per_metric_np = np.asarray(all_train_mse_per_metric, dtype=np.float64)
+    train_mae_per_metric_np = np.asarray(all_train_mae_per_metric, dtype=np.float64)
+
+    val_loss_per_metric_np = np.asarray(all_val_loss_per_metric, dtype=np.float64)
+    val_mse_per_metric_np = np.asarray(all_val_mse_per_metric, dtype=np.float64)
+    val_mae_per_metric_np = np.asarray(all_val_mae_per_metric, dtype=np.float64)
 
     train_mean_r2_np = np.asarray(all_train_mean_r2, dtype=np.float64)
     val_mean_r2_np = np.asarray(all_val_mean_r2, dtype=np.float64)
@@ -433,6 +561,14 @@ def summarize_fold_results(
         "all_val_loss": all_val_loss,
         "all_val_mse_loss": all_val_mse,
         "all_val_mae_loss": all_val_mae,
+        
+        "all_train_loss_per_metric": all_train_loss_per_metric,
+        "all_train_mse_per_metric": all_train_mse_per_metric,
+        "all_train_mae_per_metric": all_train_mae_per_metric,
+
+        "all_val_loss_per_metric": all_val_loss_per_metric,
+        "all_val_mse_per_metric": all_val_mse_per_metric,
+        "all_val_mae_per_metric": all_val_mae_per_metric,
 
         "all_train_r2_per_metric": all_train_r2_per_metric,
         "all_val_r2_per_metric": all_val_r2_per_metric,
@@ -447,6 +583,14 @@ def summarize_fold_results(
         "mean_val_loss": mean_curve(all_val_loss),
         "mean_val_mse_loss": mean_curve(all_val_mse),
         "mean_val_mae_loss": mean_curve(all_val_mae),
+        
+        "mean_train_loss_per_metric": train_loss_per_metric_np.mean(axis=0).tolist(),
+        "mean_train_mse_per_metric": train_mse_per_metric_np.mean(axis=0).tolist(),
+        "mean_train_mae_per_metric": train_mae_per_metric_np.mean(axis=0).tolist(),
+
+        "mean_val_loss_per_metric": val_loss_per_metric_np.mean(axis=0).tolist(),
+        "mean_val_mse_per_metric": val_mse_per_metric_np.mean(axis=0).tolist(),
+        "mean_val_mae_per_metric": val_mae_per_metric_np.mean(axis=0).tolist(),
 
         "std_train_loss": std_curve(all_train_loss),
         "std_train_mse_loss": std_curve(all_train_mse),
@@ -463,6 +607,22 @@ def summarize_fold_results(
         "var_val_loss": var_curve(all_val_loss),
         "var_val_mse_loss": var_curve(all_val_mse),
         "var_val_mae_loss": var_curve(all_val_mae),
+        
+        "std_train_loss_per_metric": train_loss_per_metric_np.std(axis=0, ddof=ddof).tolist(),
+        "std_train_mse_per_metric": train_mse_per_metric_np.std(axis=0, ddof=ddof).tolist(),
+        "std_train_mae_per_metric": train_mae_per_metric_np.std(axis=0, ddof=ddof).tolist(),
+
+        "std_val_loss_per_metric": val_loss_per_metric_np.std(axis=0, ddof=ddof).tolist(),
+        "std_val_mse_per_metric": val_mse_per_metric_np.std(axis=0, ddof=ddof).tolist(),
+        "std_val_mae_per_metric": val_mae_per_metric_np.std(axis=0, ddof=ddof).tolist(),
+
+        "var_train_loss_per_metric": train_loss_per_metric_np.var(axis=0, ddof=ddof).tolist(),
+        "var_train_mse_per_metric": train_mse_per_metric_np.var(axis=0, ddof=ddof).tolist(),
+        "var_train_mae_per_metric": train_mae_per_metric_np.var(axis=0, ddof=ddof).tolist(),
+
+        "var_val_loss_per_metric": val_loss_per_metric_np.var(axis=0, ddof=ddof).tolist(),
+        "var_val_mse_per_metric": val_mse_per_metric_np.var(axis=0, ddof=ddof).tolist(),
+        "var_val_mae_per_metric": val_mae_per_metric_np.var(axis=0, ddof=ddof).tolist(),
 
         "mean_train_r2_per_metric": train_r2_np.mean(axis=0).tolist(),
         "mean_val_r2_per_metric": val_r2_np.mean(axis=0).tolist(),
@@ -481,6 +641,17 @@ def summarize_fold_results(
 
         "var_train_r2": float(train_mean_r2_np.var(ddof=ddof)),
         "var_val_r2": float(val_mean_r2_np.var(ddof=ddof)),
+        
+        "final_mean_train_loss_per_metric": train_loss_per_metric_np.mean(axis=0)[-1].tolist(),
+        "final_mean_train_mse_per_metric": train_mse_per_metric_np.mean(axis=0)[-1].tolist(),
+        "final_mean_train_mae_per_metric": train_mae_per_metric_np.mean(axis=0)[-1].tolist(),
+
+        "final_mean_val_loss_per_metric": val_loss_per_metric_np.mean(axis=0)[-1].tolist(),
+        "final_mean_val_mse_per_metric": val_mse_per_metric_np.mean(axis=0)[-1].tolist(),
+        "final_mean_val_mae_per_metric": val_mae_per_metric_np.mean(axis=0)[-1].tolist(),
+
+        "final_mean_train_average_loss": float(np.mean(train_loss_per_metric_np.mean(axis=0)[-1])),
+        "final_mean_val_average_loss": float(np.mean(val_loss_per_metric_np.mean(axis=0)[-1])),
     }
 
 
@@ -554,7 +725,59 @@ def save_summaries_to_excel(
             "var_val_loss": dumps_json(summary["var_val_loss"]),
             "var_val_mse_loss": dumps_json(summary["var_val_mse_loss"]),
             "var_val_mae_loss": dumps_json(summary["var_val_mae_loss"]),
+            
+            "all_train_loss_per_metric": dumps_json(summary["all_train_loss_per_metric"]),
+            "all_train_mse_per_metric": dumps_json(summary["all_train_mse_per_metric"]),
+            "all_train_mae_per_metric": dumps_json(summary["all_train_mae_per_metric"]),
+
+            "all_val_loss_per_metric": dumps_json(summary["all_val_loss_per_metric"]),
+            "all_val_mse_per_metric": dumps_json(summary["all_val_mse_per_metric"]),
+            "all_val_mae_per_metric": dumps_json(summary["all_val_mae_per_metric"]),
+
+            "mean_train_loss_per_metric": dumps_json(summary["mean_train_loss_per_metric"]),
+            "mean_train_mse_per_metric": dumps_json(summary["mean_train_mse_per_metric"]),
+            "mean_train_mae_per_metric": dumps_json(summary["mean_train_mae_per_metric"]),
+
+            "mean_val_loss_per_metric": dumps_json(summary["mean_val_loss_per_metric"]),
+            "mean_val_mse_per_metric": dumps_json(summary["mean_val_mse_per_metric"]),
+            "mean_val_mae_per_metric": dumps_json(summary["mean_val_mae_per_metric"]),
+
+            "std_train_loss_per_metric": dumps_json(summary["std_train_loss_per_metric"]),
+            "std_train_mse_per_metric": dumps_json(summary["std_train_mse_per_metric"]),
+            "std_train_mae_per_metric": dumps_json(summary["std_train_mae_per_metric"]),
+
+            "std_val_loss_per_metric": dumps_json(summary["std_val_loss_per_metric"]),
+            "std_val_mse_per_metric": dumps_json(summary["std_val_mse_per_metric"]),
+            "std_val_mae_per_metric": dumps_json(summary["std_val_mae_per_metric"]),
+
+            "var_train_loss_per_metric": dumps_json(summary["var_train_loss_per_metric"]),
+            "var_train_mse_per_metric": dumps_json(summary["var_train_mse_per_metric"]),
+            "var_train_mae_per_metric": dumps_json(summary["var_train_mae_per_metric"]),
+
+            "var_val_loss_per_metric": dumps_json(summary["var_val_loss_per_metric"]),
+            "var_val_mse_per_metric": dumps_json(summary["var_val_mse_per_metric"]),
+            "var_val_mae_per_metric": dumps_json(summary["var_val_mae_per_metric"]),
+
+            "final_mean_train_loss_per_metric": dumps_json(summary["final_mean_train_loss_per_metric"]),
+            "final_mean_train_mse_per_metric": dumps_json(summary["final_mean_train_mse_per_metric"]),
+            "final_mean_train_mae_per_metric": dumps_json(summary["final_mean_train_mae_per_metric"]),
+
+            "final_mean_val_loss_per_metric": dumps_json(summary["final_mean_val_loss_per_metric"]),
+            "final_mean_val_mse_per_metric": dumps_json(summary["final_mean_val_mse_per_metric"]),
+            "final_mean_val_mae_per_metric": dumps_json(summary["final_mean_val_mae_per_metric"]),
+
+            "final_mean_train_average_loss": summary["final_mean_train_average_loss"],
+            "final_mean_val_average_loss": summary["final_mean_val_average_loss"],
         }
+
+        for i, name in enumerate(TARGET_NAMES):
+            row[f"final_mean_val_{name}_loss"] = summary["final_mean_val_loss_per_metric"][i]
+            row[f"final_mean_val_{name}_mse"] = summary["final_mean_val_mse_per_metric"][i]
+            row[f"final_mean_val_{name}_mae"] = summary["final_mean_val_mae_per_metric"][i]
+
+            row[f"final_mean_train_{name}_loss"] = summary["final_mean_train_loss_per_metric"][i]
+            row[f"final_mean_train_{name}_mse"] = summary["final_mean_train_mse_per_metric"][i]
+            row[f"final_mean_train_{name}_mae"] = summary["final_mean_train_mae_per_metric"][i]
 
         rows.append(row)
 
