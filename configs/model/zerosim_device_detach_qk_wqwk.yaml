@@ -1,4 +1,4 @@
-name: "zerosim_device_detach_qk_wq"
+name: "zerosim_device_detach_qk_wqwk"
 
 hidden_dim: [512]
 output_dim: [1]

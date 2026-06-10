@@ -3,6 +3,7 @@ from .structure_encoding_layer_no_grad import Structure_Encoding_Layer_No_Grad
 from .structure_encoding_layer_detach_qkv import Structure_Encoding_Layer_Detach_qkv
 from .structure_encoding_layer_detach_qk import Structure_Encoding_Layer_Detach_qk
 from .structure_encoding_layer_detach_qk_wq import Structure_Encoding_Layer_Detach_qk_wq
+from .structure_encoding_layer_detach_qk_wqwk import Structure_Encoding_Layer_Detach_qk_wqwk
 from .parameter_injection_layer import Parameter_Injection_Layer
 from .parameter_injection_ge_layer import Parameter_Injection_GE_Layer
 from .parameter_injection_layer_no_grad import Parameter_Injection_Layer_No_Grad
@@ -10,7 +11,9 @@ from .parameter_injection_layer_no_grad_test import Parameter_Injection_Layer_No
 from .parameter_injection_layer_detach_qkv import Parameter_Injection_Layer_Detach_qkv
 from .parameter_injection_layer_detach_qk import Parameter_Injection_Layer_Detach_qk
 from .parameter_injection_layer_detach_qk_wq import Parameter_Injection_Layer_Detach_qk_wq
+from .parameter_injection_layer_detach_qk_wqwk import Parameter_Injection_Layer_Detach_qk_wqwk
 
 __all__ = ['Structure_Encoding_Layer', 'Structure_Encoding_Layer_No_Grad','Parameter_Injection_Layer', 'Parameter_Injection_GE_Layer', 
         'Parameter_Injection_Layer_No_Grad', 'Parameter_Injection_Layer_No_Grad_Test', "Structure_Encoding_Layer_Detach_qkv", "Structure_Encoding_Layer_Detach_qk",
-        "Structure_Encoding_Layer_Detach_qk_wq", "Parameter_Injection_Layer_Detach_qkv", "Parameter_Injection_Layer_Detach_qk", "Parameter_Injection_Layer_Detach_qk_wq"]
+        "Structure_Encoding_Layer_Detach_qk_wq", "Parameter_Injection_Layer_Detach_qkv", "Parameter_Injection_Layer_Detach_qk", "Parameter_Injection_Layer_Detach_qk_wq",
+        "Structure_Encoding_Layer_Detach_qk_wqwk", "Parameter_Injection_Layer_Detach_qk_wqwk"]
