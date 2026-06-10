@@ -252,7 +252,7 @@ def build_model(model_name: str, model_hyper_parameters: Dict[str, Any], input_s
     elif model_name == 'zerosim_device_detach_qkv':
         if device_level_attn_mask is None:
             raise ValueError("zerosim_device_detach_qkv requires device_level_attn_mask.")
-        model = Zerosim_Device_Final_No_Grad_Test(
+        model = Zerosim_Device_Detach_qkv(
             feature_dim=device_feature_dim,
             hidden_dim=int(model_hyper_parameters['hidden_dim']),
             output_dim=int(model_hyper_parameters['output_dim']),
@@ -271,7 +271,7 @@ def build_model(model_name: str, model_hyper_parameters: Dict[str, Any], input_s
     elif model_name == 'zerosim_device_detach_qk':
         if device_level_attn_mask is None:
             raise ValueError("zerosim_device_detach_qk requires device_level_attn_mask.")
-        model = Zerosim_Device_Final_No_Grad_Test(
+        model = Zerosim_Device_Detach_qk(
             feature_dim=device_feature_dim,
             hidden_dim=int(model_hyper_parameters['hidden_dim']),
             output_dim=int(model_hyper_parameters['output_dim']),
@@ -290,7 +290,7 @@ def build_model(model_name: str, model_hyper_parameters: Dict[str, Any], input_s
     elif model_name == 'zerosim_device_detach_qk_wq':
         if device_level_attn_mask is None:
             raise ValueError("zerosim_device_detach_qk_wq requires device_level_attn_mask.")
-        model = Zerosim_Device_Final_No_Grad_Test(
+        model = Zerosim_Device_Detach_qk_wq(
             feature_dim=device_feature_dim,
             hidden_dim=int(model_hyper_parameters['hidden_dim']),
             output_dim=int(model_hyper_parameters['output_dim']),
