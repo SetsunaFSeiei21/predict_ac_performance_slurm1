@@ -302,6 +302,56 @@ def print_relative_result(value, base_value):
     return diff, rel
 
 
+MEMORY_PROFILE_PRESETS = {
+    "gat": {
+        "models": ["gat", "gat_split_full", "gat_no_grad_test"],
+        "overrides": {},
+    },
+    "zerosim_device": {
+        "models": [
+            "zerosim_device",
+            "zerosim_device_no_grad_test",
+            "zerosim_device_final_no_grad_test",
+        ],
+        "overrides": {
+            "structure_encoding_layer_num": 3,
+            "parameter_injection_layer_num": 3,
+        },
+    },
+    "zerosim_device_wo_se": {
+        "models": [
+            "zerosim_device_wo_se",
+            "zerosim_device_wo_se_no_grad_test",
+        ],
+        "overrides": {
+            "structure_encoding_layer_num": 0,
+            "parameter_injection_layer_num": 3,
+        },
+    },
+}
+
+
+def apply_memory_profile_preset(args):
+    if args.memory_profile is None:
+        return
+
+    if args.memory_profile not in MEMORY_PROFILE_PRESETS:
+        valid_names = ", ".join(sorted(MEMORY_PROFILE_PRESETS))
+        raise ValueError(
+            f"Unknown memory profile preset: {args.memory_profile}. "
+            f"Valid presets: {valid_names}"
+        )
+
+    preset = MEMORY_PROFILE_PRESETS[args.memory_profile]
+    args.models = list(preset["models"])
+
+    for key, value in preset.get("overrides", {}).items():
+        setattr(args, key, value)
+
+    # Memory profiling usually needs graph-level activation statistics as well.
+    args.profile_graph = True
+
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -395,6 +445,17 @@ def main():
     )
 
     parser.add_argument(
+        "--memory_profile",
+        type=str,
+        default=None,
+        choices=sorted(MEMORY_PROFILE_PRESETS.keys()),
+        help=(
+            "Use a built-in memory-profile preset. "
+            "This overrides --models and enables --profile_graph."
+        ),
+    )
+
+    parser.add_argument(
         "--profile_graph",
         action="store_true",
         help="Also profile autograd graph nodes and saved tensors.",
@@ -402,6 +463,7 @@ def main():
     parser.add_argument("--topk", type=int, default=10)
 
     args = parser.parse_args()
+    apply_memory_profile_preset(args)
 
     assert torch.cuda.is_available(), "CUDA is not available."
 
@@ -423,6 +485,7 @@ def main():
     )
 
     print("=" * 100)
+    print(f"memory_profile                 = {args.memory_profile}")
     print(f"models                         = {args.models}")
     print(f"batch_size                     = {args.batch_size}")
     print(f"device_num                     = {args.device_num}")
