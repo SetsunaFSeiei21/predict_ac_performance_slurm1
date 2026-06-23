@@ -11,8 +11,17 @@ PERFORMANCE_ORDER = ["SR_Rise_V_us", "LoopGain_dB", "LoopUBW_MHz", "LoopPM_deg",
 
 def clean_xy_csv(design_features_file_path: str, targets_file_path: str) -> None:
     
-    design_df = pd.read_csv(design_features_file_path)
-    targets_df = pd.read_csv(targets_file_path)
+    design_df = pd.read_csv(
+        design_features_file_path,
+        keep_default_na=True,
+        na_values=["nan", "NaN", "NAN", "None", "none", "nil", "Nil", "NIL", ""],
+    )
+
+    targets_df = pd.read_csv(
+        targets_file_path,
+        keep_default_na=True,
+        na_values=["nan", "NaN", "NAN", "None", "none", "nil", "Nil", "NIL", ""],
+    )
 
     if len(design_df) != len(targets_df):
         raise ValueError(
