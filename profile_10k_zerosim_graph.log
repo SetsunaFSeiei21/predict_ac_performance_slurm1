@@ -1,0 +1,128 @@
+====================================================================================================
+memory_profile                 = None
+models                         = ['zerosim_device_wo_se', 'zerosim_device_wo_se_no_grad_test']
+batch_size                     = 256
+device_num                     = 32
+feature_dim                    = 8
+hidden_dim                     = 512
+output_dim                     = 1
+dropout                        = 0.1
+num_heads                      = 8
+embedding_layer_num            = 2
+encoder_layer_num              = 3
+structure_encoding_layer_num   = 0
+parameter_injection_layer_num  = 3
+gcn_layer_num                  = 3
+gat_layer_num                  = 3
+decoder_layer_num              = 1
+output_layer_num               = 2
+performance_num                = 5
+init_alpha                     = 1.0
+true_head_ratio                = 0.5
+need_attn_score                = False
+proxy_scale                    = 1.0
+freeze_proxy_attention         = False
+mask                           = full
+repeat                         = 157
+profile_graph                  = True
+====================================================================================================
+
+Profiling zerosim_device_wo_se ...
+Params          : 21,313,025
+Trainable params: 21,313,025
+Inference peak memory: 281.47 MB
+Inference time       : 30.19 ms/iter
+Training peak memory : 2821.15 MB
+Training time        : 92.78 ms/iter
+
+Graph profile for zerosim_device_wo_se:
+Autograd nodes      : 899
+Saved tensors       : 383
+Total saved tensors : 2632.09 MB
+Unique storage      : 2728.60 MB
+Forward peak memory : 2818.05 MB
+Train peak memory   : 2818.05 MB
+One-step time       : 94.70 ms
+Loss                : 1.442256
+Top saved tensor shapes:
+    count=  52 | shape=(512,) | dtype=torch.float32 | device=cuda:0 | requires_grad=True
+    count=  49 | shape=(512, 512) | dtype=torch.float32 | device=cuda:0 | requires_grad=True
+    count=  49 | shape=(8448, 512) | dtype=torch.float32 | device=cuda:0 | requires_grad=True
+    count=  48 | shape=(256, 33, 1) | dtype=torch.float32 | device=cuda:0 | requires_grad=False
+    count=  36 | shape=(256, 33, 512) | dtype=torch.float32 | device=cuda:0 | requires_grad=True
+    count=  24 | shape=(256, 33, 512) | dtype=torch.bool | device=cuda:0 | requires_grad=False
+    count=  19 | shape=(2048, 33, 64) | dtype=torch.float32 | device=cuda:0 | requires_grad=True
+    count=  12 | shape=(2048, 33, 33) | dtype=torch.float32 | device=cuda:0 | requires_grad=True
+    count=  12 | shape=(2048, 33, 32) | dtype=torch.float32 | device=cuda:0 | requires_grad=True
+    count=   8 | shape=(8192, 512) | dtype=torch.float32 | device=cuda:0 | requires_grad=True
+
+Profiling zerosim_device_wo_se_no_grad_test ...
+Params          : 21,316,097
+Trainable params: 19,740,161
+Inference peak memory: 292.62 MB
+Inference time       : 28.67 ms/iter
+Training peak memory : 2610.28 MB
+Training time        : 84.60 ms/iter
+
+Graph profile for zerosim_device_wo_se_no_grad_test:
+Autograd nodes      : 743
+Saved tensors       : 401
+Total saved tensors : 2514.37 MB
+Unique storage      : 2511.88 MB
+Forward peak memory : 2610.28 MB
+Train peak memory   : 2610.28 MB
+One-step time       : 88.64 ms
+Loss                : 1.289686
+Top saved tensor shapes:
+    count=  64 | shape=(512,) | dtype=torch.float32 | device=cuda:0 | requires_grad=True
+    count=  61 | shape=(512, 512) | dtype=torch.float32 | device=cuda:0 | requires_grad=True
+    count=  48 | shape=(256, 33, 1) | dtype=torch.float32 | device=cuda:0 | requires_grad=False
+    count=  43 | shape=(8448, 512) | dtype=torch.float32 | device=cuda:0 | requires_grad=True
+    count=  42 | shape=(256, 33, 512) | dtype=torch.float32 | device=cuda:0 | requires_grad=True
+    count=  24 | shape=(256, 33, 512) | dtype=torch.bool | device=cuda:0 | requires_grad=False
+    count=  12 | shape=(256, 8, 33, 33) | dtype=torch.float32 | device=cuda:0 | requires_grad=False
+    count=  12 | shape=(2048, 33, 32) | dtype=torch.float32 | device=cuda:0 | requires_grad=True
+    count=   8 | shape=(8192, 512) | dtype=torch.float32 | device=cuda:0 | requires_grad=True
+    count=   7 | shape=(512, 1024) | dtype=torch.float32 | device=cuda:0 | requires_grad=True
+
+====================================================================================================
+Summary
+====================================================================================================
+
+Model: zerosim_device_wo_se
+Params              :   21,313,025 | diff vs zerosim_device_wo_se:           +0 (+0.00%)
+Trainable params    :   21,313,025 | diff vs zerosim_device_wo_se:           +0 (+0.00%)
+Inference memory    :       281.47 MB | diff vs zerosim_device_wo_se:        +0.00 MB (+0.00%)
+Training memory     :      2821.15 MB | diff vs zerosim_device_wo_se:        +0.00 MB (+0.00%)
+Inference time      :        30.19 ms | diff vs zerosim_device_wo_se:        +0.00 ms (+0.00%)
+Training time       :        92.78 ms | diff vs zerosim_device_wo_se:        +0.00 ms (+0.00%)
+
+Model: zerosim_device_wo_se_no_grad_test
+Params              :   21,316,097 | diff vs zerosim_device_wo_se:       +3,072 (+0.01%)
+Trainable params    :   19,740,161 | diff vs zerosim_device_wo_se:   -1,572,864 (-7.38%)
+Inference memory    :       292.62 MB | diff vs zerosim_device_wo_se:       +11.15 MB (+3.96%)
+Training memory     :      2610.28 MB | diff vs zerosim_device_wo_se:      -210.87 MB (-7.47%)
+Inference time      :        28.67 ms | diff vs zerosim_device_wo_se:        -1.52 ms (-5.04%)
+Training time       :        84.60 ms | diff vs zerosim_device_wo_se:        -8.18 ms (-8.81%)
+
+====================================================================================================
+Graph Summary
+====================================================================================================
+
+Model: zerosim_device_wo_se
+graph_nodes         :       899.00 | diff vs zerosim_device_wo_se:        +0.00 | rel=   +0.00%
+num_saved           :       383.00 | diff vs zerosim_device_wo_se:        +0.00 | rel=   +0.00%
+total_saved_mb      :      2632.09 | diff vs zerosim_device_wo_se:        +0.00 | rel=   +0.00%
+unique_storage_mb   :      2728.60 | diff vs zerosim_device_wo_se:        +0.00 | rel=   +0.00%
+forward_peak_mb     :      2818.05 | diff vs zerosim_device_wo_se:        +0.00 | rel=   +0.00%
+train_peak_mb       :      2818.05 | diff vs zerosim_device_wo_se:        +0.00 | rel=   +0.00%
+elapsed_ms          :        94.70 | diff vs zerosim_device_wo_se:        +0.00 | rel=   +0.00%
+
+Model: zerosim_device_wo_se_no_grad_test
+graph_nodes         :       743.00 | diff vs zerosim_device_wo_se:      -156.00 | rel=  -17.35%
+num_saved           :       401.00 | diff vs zerosim_device_wo_se:       +18.00 | rel=   +4.70%
+total_saved_mb      :      2514.37 | diff vs zerosim_device_wo_se:      -117.73 | rel=   -4.47%
+unique_storage_mb   :      2511.88 | diff vs zerosim_device_wo_se:      -216.73 | rel=   -7.94%
+forward_peak_mb     :      2610.28 | diff vs zerosim_device_wo_se:      -207.77 | rel=   -7.37%
+train_peak_mb       :      2610.28 | diff vs zerosim_device_wo_se:      -207.77 | rel=   -7.37%
+elapsed_ms          :        88.64 | diff vs zerosim_device_wo_se:        -6.06 | rel=   -6.40%

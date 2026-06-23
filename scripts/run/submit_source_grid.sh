@@ -19,8 +19,8 @@ MODELS=(
     # accformer
     # accformer_no_grad
     # accformer_no_grad_test
-    # zerosim_device
-    # zerosim_device_final_no_grad_test
+    zerosim_device
+    zerosim_device_final_no_grad_test
     # zerosim_device_no_grad_test
     # zerosim_device_no_grad
     # global_encoder_wo_se
@@ -32,7 +32,7 @@ MODELS=(
     # zerosim_device_detach_qkv
     # zerosim_device_detach_qk
     # zerosim_device_detach_qk_wq
-    zerosim_device_detach_qk_wqwk
+    # zerosim_device_detach_qk_wqwk
     # gat_w_gt
     # gat_no_grad_test
     # gcn_w_gt
@@ -40,9 +40,9 @@ MODELS=(
 )
 
 CIRCUITS=(
-    # 5t_opamp
-    two_stage_opamp
-    # two_stage_folded_opamp
+    5t_opamp
+    # two_stage_opamp
+    two_stage_folded_opamp
 )
 
 # Smoke test:
