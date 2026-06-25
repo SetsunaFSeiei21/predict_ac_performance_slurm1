@@ -1,10 +1,11 @@
-name: "zerosim_device_wo_se_linearformer"
+name: "zerosim_device_linearformer"
 
 hidden_dim: [512]
 output_dim: [1]
 dropout: [0.1]
 num_heads: [8]
 embedding_layer_num: [2]
+structure_encoding_layer_num: [2]
 parameter_injection_layer_num: [2]
 decoder_layer_num: [1]
 output_layer_num: [2]
