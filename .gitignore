@@ -9,9 +9,13 @@ __pycache__/
 *.ipynb
 
 experiment_result/
+experiment_result_55/
 logs/
+logs_55/
 model_weight/
+model_weight_55/
 hydra_outputs/
+hydra_outputs_55/
 hpc_logs/
 .vscode/
 plot_result/

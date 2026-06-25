@@ -5,7 +5,8 @@ defaults:
   - scheduler: warmup_cosine
   - exp: source_train
 
-meta_path: "data"
+# meta_path: "data"
+meta_path: "data_55"
 seed: 42
 
 result_root: "experiment_result"

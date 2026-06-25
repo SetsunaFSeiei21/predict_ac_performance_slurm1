@@ -30,9 +30,21 @@ def clean_xy_csv(design_features_file_path: str, targets_file_path: str) -> None
             f"{targets_file_path} has {len(targets_df)} rows."
         )
 
+    # 关键新增：如果 target CSV 是 9 个指标，只保留模型需要的 5 个指标
+    missing_cols = [col for col in PERFORMANCE_ORDER if col not in targets_df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Target CSV missing required performance columns: {missing_cols}\n"
+            f"Available columns: {list(targets_df.columns)}"
+        )
+
+    targets_df = targets_df[PERFORMANCE_ORDER]
+
+    # 把 inf / -inf 也当成 NaN
     design_df = design_df.replace([np.inf, -np.inf], np.nan)
     targets_df = targets_df.replace([np.inf, -np.inf], np.nan)
 
+    # 注意：这里只检查裁剪后的 5 个 target 指标
     valid_mask = ~(
         design_df.isna().any(axis=1) |
         targets_df.isna().any(axis=1)
@@ -50,6 +62,7 @@ def clean_xy_csv(design_features_file_path: str, targets_file_path: str) -> None
 
     print(f"[Clean CSV] {design_features_file_path}")
     print(f"[Clean CSV] {targets_file_path}")
+    print(f"保留性能指标: {PERFORMANCE_ORDER}")
     print(f"原始样本数: {before_num}")
     print(f"有效样本数: {after_num}")
     print(f"删除样本数: {removed_num}")
